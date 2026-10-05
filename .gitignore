@@ -1,0 +1,28 @@
+.env
+# Secrets: .env holds DB passwords and RAG_DB_URL
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# Leftovers from cleanup
+_old/
+
+# Client data: the database dump, even though it's scrubbed
+*.sql
+!rag/schema.sql
+
+# Generated files you can rebuild (optional, remove these lines if you want them tracked)
+rag/raw.json
+rag/chunks.jsonl
+rag/products.jsonl
+rag/pending.jsonl
+eval_phase*_results.json
+
+logs/
