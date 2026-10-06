@@ -11,6 +11,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sjbot import tracing
 from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, MAX_TOOL_CALLS_PER_TURN, check_reply, is_extraction_attempt,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
@@ -46,7 +47,7 @@ def log_for_review(question: str, reason: str, tools_used: list[str]) -> None:
         log.exception("could not write review log")
 
 
-def answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
+def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
            ctx=None) -> dict:
     """Returns {"reply": str, "tools_used": [names], "blocked": reason or None}.
     ctx (sjbot.context.ChatContext) says who is asking; your server builds it from the request, never from the message."""
@@ -59,6 +60,7 @@ def answer(user_message: str, llm, history: list[dict] | None = None, max_calls:
         return {"reply": EXTRACTION_REPLY, "tools_used": [], "blocked": "extraction_attempt"}
 
     messages = _clean_history(history) + [{"role": "user", "text": question}]
+    user_said = " ".join(m["text"] for m in messages if m["role"] == "user")   # figures the customer typed earlier may be repeated
     results: list[dict] = []
     contact_results: list[dict] = []                     # results whose phones/emails the reply may repeat
     tools_used: list[str] = []
@@ -67,7 +69,7 @@ def answer(user_message: str, llm, history: list[dict] | None = None, max_calls:
 
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
-            turn = llm.generate(messages)
+            turn = tracing.generate(llm, messages)
         except Exception:
             log.exception("llm call failed")
             reason = "llm_error"
@@ -80,7 +82,9 @@ def answer(user_message: str, llm, history: list[dict] | None = None, max_calls:
             if len(tools_used) >= max_calls:
                 result = dict(_LIMIT_RESULT)
             else:
-                result = run_tool(call.name, call.args, ctx)
+                with tracing.span(f"tool:{call.name}", input=call.args) as sp:
+                    result = run_tool(call.name, call.args, ctx)
+                    sp.update(output=result)
                 tools_used.append(call.name)
                 results.append(result)
                 if call.name not in CONTACT_UNTRUSTED_TOOLS:
@@ -93,7 +97,9 @@ def answer(user_message: str, llm, history: list[dict] | None = None, max_calls:
         reply, reason = None, "empty_reply"
     if reply is not None:
         trusted = store_contact_text()
-        ok, why = check_reply(reply, results, question, trusted, contact_results)
+        with tracing.span("reply_check", input=reply) as sp:
+            ok, why = check_reply(reply, results, user_said, trusted, contact_results)
+            sp.update(output={"ok": ok, "reason": why})
         for _ in range(2):                                             # right answer, bad contact line or link: fix it
             if ok or why not in ("unknown_email", "unknown_phone", "unknown_link"):
                 break
@@ -104,7 +110,7 @@ def answer(user_message: str, llm, history: list[dict] | None = None, max_calls:
             log.warning("repaired reply (%s)", why)
             log_for_review(question, f"repaired_{why}", tools_used)
             reply = fixed
-            ok, why = check_reply(reply, results, question, trusted, contact_results)
+            ok, why = check_reply(reply, results, user_said, trusted, contact_results)
         if not ok:
             reply, reason = None, why
 
@@ -114,3 +120,12 @@ def answer(user_message: str, llm, history: list[dict] | None = None, max_calls:
     if any(isinstance(r, dict) and (r.get("found") is False or r.get("error")) for r in results):
         log_for_review(question, "tool_found_nothing_or_error", tools_used)
     return {"reply": reply, "tools_used": tools_used, "blocked": None}
+
+
+def answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
+           ctx=None) -> dict:
+    """Same as before; the whole turn is also one trace when tracing is on (see sjbot/tracing.py)."""
+    with tracing.visitor(ctx), tracing.span("chat_turn", input=str(user_message)[:MAX_USER_CHARS]) as sp:
+        out = _answer(user_message, llm, history, max_calls, ctx)
+        sp.update(output={"reply": out["reply"], "tools_used": out["tools_used"], "blocked": out["blocked"]})
+        return out

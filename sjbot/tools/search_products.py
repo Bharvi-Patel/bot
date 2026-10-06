@@ -106,6 +106,18 @@ def _prepare(args: dict[str, Any]) -> dict[str, Any]:
     return vals
 
 
+def _stem(word: str) -> str:
+    """'beds' -> 'bed', 'sofas' -> 'sofa', 'mattresses' -> 'mattress': product names are mostly singular, and LIKE is exact."""
+    w = word.lower()
+    if len(w) > 4 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 4 and w.endswith(("ses", "xes", "ches", "shes", "zes")):
+        return w[:-2]
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us")):
+        return w[:-1]
+    return w
+
+
 def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], list[str], list[Any]]:
     """Build (ctes, cte_params, where, params).
 
@@ -145,7 +157,7 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
     if v["keyword"]:
         for word in v["keyword"].split()[:5]:
             where.append("CONCAT_WS(' ', p.name, par.name) LIKE %s")
-            params.append(f"%{_like_escape(word)}%")
+            params.append(f"%{_like_escape(_stem(word))}%")
     if v["brand_slug"]:
         where.append("COALESCE(p.brand_slug, par.brand_slug) = %s")
         params.append(v["brand_slug"])
@@ -246,10 +258,16 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
     for row in rows:
         row["main_image"] = full_image_url(row.get("main_image"))
     result: dict[str, Any] = {"count": len(rows), "products": rows}
+    applied = {k: args[k] for k in ("min_price", "max_price") if args.get(k) is not None}
+    if applied:
+        result["applied_filters"] = applied                  # the price limits actually used, so the reply may state them
     if len(rows) == MAX_RESULTS:
         result["note"] = f"Showing the first {MAX_RESULTS} matches; there may be more. Suggest narrowing the filters."
     if not rows:
         result["note"] = "No products matched. Suggest loosening a filter (price, size or color)."
+        if args.get("keyword") and not args.get("category_slug"):
+            result["note"] += (" Before saying we have none, look up the type with list_categories and search its category_slug "
+                               "(with the same price limit); a keyword only matches words in product names.")
         if args.get("max_width_in") is not None:
             result["note"] = ("No product with a width on file fits that size limit. Do NOT say the catalog has no such products: "
                               "say that none of the ones with a listed width fit, mention any without size data (see size_note), "

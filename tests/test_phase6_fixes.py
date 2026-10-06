@@ -96,3 +96,38 @@ def test_phone_from_another_tool_is_still_allowed(monkeypatch):
 
 def test_prompt_has_the_pickup_rule():
     assert "In-store pickup" in g.SYSTEM_PROMPT and "only if the result does not list it" in g.SYSTEM_PROMPT
+
+
+# ---------- "yeah show me other options": a good answer was blocked because it said "under $1,000" ----------
+SOFA_ROWS = [{"sku": "S1", "slug": "clearbrooke-sofa-s1", "name": "Clearbrooke Sofa", "price": 455.83, "brand_name": "Acme",
+              "width": None, "height": None, "depth": None, "main_image": None, "matching_options": 0}]
+OPTIONS_REPLY = "Here are sofas under $1,000: Clearbrooke Sofa, $455.83.\n/product/clearbrooke-sofa-s1"
+
+
+def test_search_result_lists_the_price_limits_it_used():
+    def db(sql, params=()):
+        return [{"n": 0}] if "COUNT(DISTINCT" in sql else [dict(r) for r in SOFA_ROWS]
+    out = search_products({"keyword": "sofa", "max_price": 1000}, run_query=db)
+    assert out["applied_filters"] == {"max_price": 1000}
+    assert "applied_filters" not in search_products({"keyword": "sofa"}, run_query=db)
+    assert g.check_reply(OPTIONS_REPLY, [out], "yeah show me other options", "{}") == (True, None)
+
+
+def test_a_limit_nobody_gave_or_applied_is_still_blocked():
+    out = {"count": 1, "products": [dict(SOFA_ROWS[0])]}
+    assert g.check_reply(OPTIONS_REPLY, [out], "yeah show me other options", "{}") == (False, "unverified_price")
+
+
+def test_figures_the_customer_typed_in_earlier_turns_may_be_repeated(monkeypatch, tmp_path):
+    monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
+    monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", "{}")
+    out = {"count": 1, "products": [dict(SOFA_ROWS[0])]}
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: out)
+    history = [{"role": "user", "text": "I have about $1,000 to spend"}, {"role": "assistant", "text": "Great, what room is it for?"}]
+    llm = FakeLLM(LLMTurn(tool_calls=[ToolCall("search_products", {"keyword": "sofa"})]), LLMTurn(text=OPTIONS_REPLY))
+    assert router.answer("living room", llm, history)["blocked"] is None
+
+
+def test_prompt_handles_other_options_and_why_questions():
+    assert "applied_filters" in g.SYSTEM_PROMPT and "say what you widened" in g.SYSTEM_PROMPT
+    assert "why you could not answer" in g.SYSTEM_PROMPT
