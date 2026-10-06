@@ -243,6 +243,21 @@ def build_missing_size_query(args: dict[str, Any]) -> tuple[str, list[Any]] | No
     return sql, cte_params + params
 
 
+def _unknown_category(slug: str, run_query: Callable) -> dict[str, Any] | None:
+    """None when the slug is a real category. Otherwise an error the model can act on, with the closest real categories."""
+    if run_query("SELECT slug FROM vw_chat_categories WHERE slug = %s LIMIT 1", [slug]):
+        return None
+    like = f"%{_like_escape(_stem(slug.replace('-', ' ').split()[-1] if slug.strip('-') else slug))}%"
+    close = run_query("SELECT slug, title FROM vw_chat_categories WHERE slug LIKE %s OR title LIKE %s "
+                      "ORDER BY CHAR_LENGTH(slug) LIMIT 5", [like, like])
+    return {
+        "error": "unknown_category",
+        "note": (f"No category has the slug '{slug}'. Never guess a category_slug: call list_categories with a keyword "
+                 "(for example 'sofa') to get a real slug, then search again with the same price limit."),
+        "did_you_mean": [{"slug": r["slug"], "title": r["title"]} for r in close],
+    }
+
+
 def search_products(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
     """Tool entry point. Returns a JSON-friendly dict for the model."""
     if run_query is None:
@@ -263,6 +278,10 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
         result["applied_filters"] = applied                  # the price limits actually used, so the reply may state them
     if len(rows) == MAX_RESULTS:
         result["note"] = f"Showing the first {MAX_RESULTS} matches; there may be more. Suggest narrowing the filters."
+    if not rows and args.get("category_slug"):
+        unknown = _unknown_category(str(args["category_slug"]).strip(), run_query)
+        if unknown:
+            return unknown                                   # a made-up slug looks like "no products"; say it is a bad slug instead
     if not rows:
         result["note"] = "No products matched. Suggest loosening a filter (price, size or color)."
         if args.get("keyword") and not args.get("category_slug"):

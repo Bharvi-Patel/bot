@@ -131,3 +131,112 @@ def test_figures_the_customer_typed_in_earlier_turns_may_be_repeated(monkeypatch
 def test_prompt_handles_other_options_and_why_questions():
     assert "applied_filters" in g.SYSTEM_PROMPT and "say what you widened" in g.SYSTEM_PROMPT
     assert "why you could not answer" in g.SYSTEM_PROMPT
+
+
+# ---------- "show beds under $500" found nothing: the keyword was the plural 'beds' and names say 'Bed' ----------
+from sjbot.tools.search_products import _stem, build_search_query
+
+
+@pytest.mark.parametrize("word,stem", [("beds", "bed"), ("Sofas", "sofa"), ("loveseats", "love" + "seat"), ("mattresses", "mattress"),
+                                       ("nightstands", "nightstand"), ("accessories", "accessory"), ("glass", "glass"),
+                                       ("bed", "bed"), ("bus", "bus"), ("rugs", "rug"), ("tv", "tv")])
+def test_plural_keywords_are_reduced_to_the_singular(word, stem):
+    assert _stem(word) == stem
+
+
+def test_keyword_search_uses_the_singular_form():
+    _, params = build_search_query({"keyword": "beds", "max_price": 500})
+    assert "%bed%" in params and "%beds%" not in params
+
+
+def test_empty_keyword_search_tells_the_model_to_try_the_category_before_giving_up():
+    out = search_products({"keyword": "bed", "max_price": 500}, run_query=lambda *_: [])
+    assert out["count"] == 0 and "list_categories" in out["note"] and "category_slug" in out["note"]
+    real_category = lambda sql, params=(): [{"slug": "bedroom-furniture-beds"}] if sql.startswith("SELECT slug FROM vw_chat_categories") else []
+    plain = search_products({"category_slug": "bedroom-furniture-beds"}, run_query=real_category)
+    assert "list_categories" not in plain["note"]
+
+
+def test_prompt_says_to_try_the_category_before_saying_none():
+    assert "singular keyword" in g.SYSTEM_PROMPT and "before saying we have none" in g.SYSTEM_PROMPT
+
+
+# ---------- "show beds under $500": list_categories('bed') returned Bedroom, Mattresses and Bedding, ... and cut off 'Beds' ----------
+from sjbot.tools.list_categories import list_categories
+
+_T = [  # id, parent, slug, title: the bed-related rows of the real category tree
+    (77, 0, "bedroom", "Bedroom"), (50, 0, "mattresses-and-bedding", "Mattresses and Bedding"), (91, 0, "kids-and-nursery", "Kids and Nursery"),
+    (71, 0, "pets", "Pets"), (6, 77, "bedroom-bedroom-furniture", "Bedroom Furniture"), (185, 77, "bedroom-sets", "Bedroom Sets"),
+    (79, 50, "mattresses-and-bedding-bedding-accessories", "Bedding Accessories"), (192, 50, "mattresses-and-bedding-sets", "Bedding Sets"),
+    (67, 91, "kids-furniture", "Kids Furniture"), (63, 91, "nursery", "Nursery"), (69, 91, "kids-bedding", "Kids Bedding"),
+    (44, 6, "bedroom-furniture-beds", "Beds"), (118, 6, "bedroom-furniture-bedroom-benches", "Bedroom Benches"),
+    (75, 6, "bedroom-furniture-bedroom-chairs", "Bedroom Chairs"), (8, 79, "bedding-accessories-bed-pillows", "Bed Pillows"),
+    (30, 67, "kids-furniture-beds", "Beds"), (66, 67, "kids-furniture-bunk-beds", "Bunk Beds"), (60, 63, "nursery-beds", "Beds"),
+    (92, 71, "pets-beds", "Beds"),
+]
+TREE = [{"category_id": i, "parent_id": p, "slug": s, "title": t} for i, p, s, t in _T]
+
+
+def cats(args):
+    return list_categories(args, run_query=lambda *_: [dict(r) for r in TREE])
+
+
+@pytest.mark.parametrize("word", ["bed", "beds", "Beds"])
+def test_the_beds_categories_are_not_cut_off_by_longer_matches(word):
+    out = cats({"keyword": word})
+    slugs = [m["slug"] for m in out["matches"]]
+    assert "bedroom-furniture-beds" in slugs
+    paths = [m["path"] for m in out["matches"]]
+    assert "Bedroom > Bedroom Furniture > Beds" in paths              # the path tells furniture beds from pet beds
+    assert out["matches"][0]["title"] in {"Bed Pillows", "Beds", "Bunk Beds"}   # whole-word matches come first
+    assert out["total_matches"] == len([r for r in TREE if "bed" in r["title"].lower()]) and "Showing the best 10" in out["note"]
+
+
+def test_a_small_match_list_has_no_total_or_note():
+    out = cats({"keyword": "pet"})
+    assert [m["slug"] for m in out["matches"]] == ["pets"] and "total_matches" not in out and out["note"] is None
+
+
+def test_prompt_prefers_the_most_specific_category():
+    assert "most specific category" in g.SYSTEM_PROMPT and "never a top-level one" in g.SYSTEM_PROMPT
+
+
+def test_prompt_keeps_greetings_short_and_contacts_on_request():
+    assert "Greetings and thanks" in g.SYSTEM_PROMPT and "from your own knowledge" in g.SYSTEM_PROMPT
+
+
+
+# ---------- "sofas under $250": the model searched category_slug 'sofas', which does not exist, and got "no products" ----------
+def db_with_categories(known, close=()):
+    def db(sql, params=()):
+        if sql.startswith("SELECT slug FROM vw_chat_categories WHERE slug = %s"):
+            return [{"slug": params[0]}] if params[0] in known else []
+        if sql.startswith("SELECT slug, title FROM vw_chat_categories"):
+            return [dict(r) for r in close]
+        return []                                            # no products either way
+    return db
+
+
+def test_an_invented_category_slug_is_an_error_with_suggestions_not_an_empty_result():
+    close = [{"slug": "living-room-sofas", "title": "Sofas"}]
+    out = search_products({"category_slug": "sofas", "max_price": 400}, run_query=db_with_categories({"living-room-sofas"}, close))
+    assert out["error"] == "unknown_category" and "'sofas'" in out["note"] and "list_categories" in out["note"]
+    assert out["did_you_mean"] == [{"slug": "living-room-sofas", "title": "Sofas"}] and "products" not in out
+
+
+def test_a_real_category_with_no_matches_is_still_a_plain_empty_result():
+    out = search_products({"category_slug": "living-room-sofas", "max_price": 50}, run_query=db_with_categories({"living-room-sofas"}))
+    assert out["count"] == 0 and "error" not in out and out["note"].startswith("No products matched")
+
+
+def test_results_are_never_second_guessed_when_products_were_found():
+    calls = []
+    def db(sql, params=()):
+        calls.append(sql)
+        return [{"n": 0}] if "COUNT(DISTINCT" in sql else [dict(SOFA_ROWS[0])]
+    out = search_products({"category_slug": "whatever", "max_price": 500}, run_query=db)
+    assert out["count"] == 1 and not any(c.startswith("SELECT slug FROM vw_chat_categories") for c in calls)
+
+
+def test_prompt_forbids_guessing_slugs():
+    assert "never guess or shorten a slug" in g.SYSTEM_PROMPT
