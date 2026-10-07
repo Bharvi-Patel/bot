@@ -166,3 +166,8 @@ def test_limiter_keeps_no_plain_email_or_order_number():
     lookup({"order_number": "102500001", "email": EMAIL}, limiter=lim)
     dumped = str(lim._hits)
     assert EMAIL not in dumped and "102500001" not in dumped
+
+
+def test_a_found_order_tells_the_model_it_cannot_cancel_or_change_orders():
+    note = lookup({"order_number": "102500001", "email": EMAIL})["note"]
+    assert "cannot cancel, change, refund or return" in note and "get_store_info" in note and "cannot be done in this chat" in note

@@ -12,4 +12,10 @@ def get_llm():
         llm = GroqChat()
         llm.ensure_model()
         return llm
+
+    if provider == "ollama":
+        from sjbot.llm_ollama import OllamaChat
+        llm = OllamaChat()
+        llm.ensure_model()
+        return llm
     raise RuntimeError(f"Unknown SJ_LLM_PROVIDER {provider!r} (use 'groq' or 'gemini')")

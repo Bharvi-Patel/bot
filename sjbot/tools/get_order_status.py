@@ -47,6 +47,8 @@ NOT_AVAILABLE = {
 }
 STATUS_NOTE = ("Say only that the order is marked with this status. Do not say whether payment was received, and do "
                "not promise shipping, delivery dates, tracking or cancellation: none of that is on file. "
+               "You cannot cancel, change, refund or return an order. If the customer asked for any of that, say plainly that it "
+               "cannot be done in this chat, then give the store's phone and email so they can ask the store (use get_store_info). "
                "Never repeat the customer's email, and never work out totals yourself.")
 
 
