@@ -287,3 +287,113 @@ def test_the_question_set_is_well_formed():
         for w in c.get("not_say", []):
             if w.startswith("re:"):
                 __import__("re").compile(w[3:])
+
+
+def test_check_truth_warns_when_the_answer_key_hit_its_own_row_limit(tmp_runs, capsys):
+    capped_case = {**CASES[0], "id": "capped", "truth": {**TRUTH, "sql": "SELECT name, price FROM vw_chat_products LIMIT 3"}}
+    full_case = {**CASES[0], "id": "roomy", "truth": {**TRUTH, "sql": "SELECT name, price FROM vw_chat_products LIMIT 3000"}}
+    code = ev.main(["--check-truth"], run_query=lambda sql, params=(): [dict(r) for r in ROWS], cases=[capped_case, full_case])
+    out_text = capsys.readouterr().out
+    assert code == 0 and "CAPPED capped" in out_text and "ok     roomy" in out_text and "1 CAPPED" in out_text
+
+
+def test_the_real_cases_do_not_use_a_small_row_limit_and_desks_exclude_lamps():
+    import re
+    sofa_250 = next(c for c in eval_cases.CASES if c["id"] == "sofa-250")
+    assert int(re.search(r"LIMIT\s+(\d+)", sofa_250["truth"]["sql"]).group(1)) >= 5000
+    desk = next(c for c in eval_cases.CASES if c["id"] == "desk-300")["truth"]["sql"]
+    assert "NOT LIKE '%Lamp%'" in desk and "NOT LIKE '%Chair%'" in desk
+
+
+def test_the_run_announces_which_model_is_being_tested(tmp_runs, capsys):
+    ev.main(["--runs", "1"], llm=FakeLLM(), answer_fn=lambda q, llm, h, ctx=None: out("Hello! What are you looking for?"),
+            run_query=fake_query, cases=CASES[1:2])
+    assert "Model: fake  (FakeLLM)" in capsys.readouterr().out
+
+
+def test_the_rug_key_follows_the_category_because_rug_names_do_not_say_rug():
+    sql = next(c for c in eval_cases.CASES if c["id"] == "rug-200")["truth"]["sql"]
+    assert "vw_chat_product_categories" in sql and "c.title LIKE '%Rug%'" in sql and "NOT LIKE '%Decor%'" in sql and "p.parent_uuid IN" in sql
+    assert "p.name LIKE" not in sql and sql.count("%s") == 1
+
+
+def test_sizes_and_dashes_match_however_the_bot_or_the_database_writes_them():
+    assert ev.norm("WAVES COLLECTION \u2013 WV01, 2' \u00d7 3'") == ev.norm("WAVES COLLECTION \u2014 WV01, 2' x 3'")
+    assert ev.norm("5\u2032 \u00d7 7\u2032") == "5' x 7'"
+    rows = [{"name": "WAVES COLLECTION \u2014 WV01, 2' x 3'", "price": 12.0}]
+    case = {"id": "r", "type": "t", "turns": ["q"], "truth": {"sql": "x", "col": "name", "price_col": "price", "min_hits": 1}, "prices": True}
+    reply = "- **WAVES COLLECTION \u2013 WV01, 2' \u00d7 3'** \u2013 $12.00"
+    assert ev.score_run(case, [out(reply)], rows)["status"] == "pass"
+
+
+# ---------------------------------------------------------------- a crashed tool must not pass by luck
+def test_a_crashed_tool_fails_the_case_even_if_the_reply_looks_fine():
+    case = {"id": "p", "type": "policy", "turns": ["return policy?"], "mention_any": ["return"]}
+    r = ev.score_run(case, [out("Returns are final.")], None, ["search_policies"])
+    assert r["status"] == "fail" and "tool_failed" in r["flags"] and "a tool crashed: search_policies" in r["reasons"][0]
+    assert ev.score_run(case, [out("Returns are final.")], None, [])["status"] == "pass"
+
+
+def test_run_case_notices_a_tool_that_crashed_during_the_conversation(monkeypatch):
+    from sjbot import guardrails as g
+    from sjbot import router
+
+    def broken(args):
+        raise AttributeError("get_extended_attention_mask")
+
+    monkeypatch.setitem(g.TOOLS, "search_policies", broken)
+    original = router.run_tool
+
+    def answer(q, llm, history, ctx=None):
+        router.run_tool("search_policies", {"question": q}, ctx)
+        return out("Returns are final.", tools=["search_policies"])
+
+    case = {"id": "p", "type": "policy", "turns": ["return policy?"], "mention_any": ["return"]}
+    r = ev.run_case(case, 1, answer, FakeLLM(), {}, None)
+    assert r["status"] == "fail" and r["tool_errors"] == ["search_policies"] and "tool_failed" in r["flags"]
+    assert router.run_tool is original                                   # the watcher puts the router back
+
+
+def test_summary_and_report_count_tool_crashes():
+    records = [rec("a", 1, "fail", "x", ["tool_failed"], ["a tool crashed"]), rec("b", 1, "pass", "x")]
+    assert ev.summarize(records)["tool_failed_runs"] == 1
+    assert "Tool crashes: 1" in ev.build_report(records, "m", [], "2026-10-08")
+
+
+# ---------------------------------------------------------------- preflight
+POLICY_CASE = {"id": "returns", "type": "policy", "turns": ["return policy?"]}
+
+
+def test_preflight_is_skipped_when_no_case_needs_the_knowledge_search():
+    assert ev.preflight(CASES) is None
+
+
+def test_preflight_reports_a_broken_knowledge_search_with_the_known_fix(monkeypatch):
+    import sjbot.tools.search_policies as sp
+
+    def broken(args):
+        raise AttributeError("'NomicBertModel' object has no attribute 'get_extended_attention_mask'")
+
+    monkeypatch.setattr(sp, "search_policies", broken)
+    problem = ev.preflight([POLICY_CASE])
+    assert "AttributeError" in problem and 'transformers<5' in problem and "pip show" in problem
+    monkeypatch.setattr(sp, "search_policies", lambda args: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert "RuntimeError: db down" in ev.preflight([POLICY_CASE]) and "transformers" not in ev.preflight([POLICY_CASE])
+
+
+def test_preflight_passes_when_the_search_works_and_flags_an_error_result(monkeypatch):
+    import sjbot.tools.search_policies as sp
+    monkeypatch.setattr(sp, "search_policies", lambda args: {"found": True, "chunks": []})
+    assert ev.preflight([POLICY_CASE]) is None
+    monkeypatch.setattr(sp, "search_policies", lambda args: {"error": "tool_failed"})
+    assert "returned an error" in ev.preflight([POLICY_CASE])
+
+
+def test_main_does_not_start_or_spend_tokens_when_preflight_fails(tmp_runs, capsys):
+    asked = []
+    code = ev.main(["--runs", "1"], llm=FakeLLM(), answer_fn=lambda *a, **k: asked.append(1), run_query=fake_query,
+                   cases=[POLICY_CASE], preflight_fn=lambda cases: "the knowledge search is broken: boom")
+    assert code == 2 and asked == [] and "Not starting: the knowledge search is broken: boom" in capsys.readouterr().out
+    code = ev.main(["--runs", "1", "--skip-preflight"], llm=FakeLLM(), answer_fn=lambda q, l, h, ctx=None: out("Returns are final."),
+                   run_query=fake_query, cases=[POLICY_CASE], preflight_fn=lambda cases: "boom")
+    assert code in (0, 1) and any(tmp_runs.glob("*.jsonl"))

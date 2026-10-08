@@ -12,13 +12,14 @@ passes EVERY run; "flaky" if it passes some; "fail" if it passes none. Provider 
 separately and are not counted against the bot. The score is read from the router's reply and tool log, so it also shows
 false "nothing found" answers, invented facts, leaks and fallback replies.
 
-Cost: each question needs several model calls (about 5,000 to 6,000 tokens). 58 cases x 3 runs is far over a free daily
+Cost: each question needs several model calls (measured: about 10,000 tokens). 58 cases x 3 runs is far over a free daily
 limit, so start with --runs 1 --limit 15. Saved replies have emails, phones and long numbers masked; the file still
 holds customer-style text, so do not commit eval_runs/.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import re
@@ -38,7 +39,8 @@ MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)")
 FALLBACK_TEXT = "can't answer that reliably"
 RUNS_DIR = Path("eval_runs")
 _TR = str.maketrans({"\u2011": "-", "\u2010": "-", "\u2013": "-", "\u2014": "-", "\u2019": "'", "\u2018": "'", "\u201c": '"',
-                     "\u201d": '"', "\u00ae": "", "\u2122": "", "\u00a0": " ", "*": "", "`": ""})
+                     "\u201d": '"', "\u00ae": "", "\u2122": "", "\u00a0": " ", "*": "", "`": "",
+                     "\u00d7": "x", "\u2032": "'", "\u2033": '"'})                    # 2' x 3' is often written 2' \u00d7 3' (or with prime marks)
 
 
 # ---------------------------------------------------------------- text helpers
@@ -101,7 +103,7 @@ def result(status: str, reasons: list[str], flags: set[str]) -> dict:
     return {"status": status, "reasons": reasons, "flags": sorted(flags)}
 
 
-def score_run(case: dict, outs: list[dict], rows: list[dict] | None) -> dict:
+def score_run(case: dict, outs: list[dict], rows: list[dict] | None, tool_errors: list[str] | tuple = ()) -> dict:
     """status: pass | fail | infra | bad_case. flags: false_none, invented, leak, fallback, infra."""
     if any(o.get("blocked") == "llm_error" for o in outs):
         return result("infra", ["the model provider failed (rate limit or outage), so this run says nothing about the bot"], {"infra"})
@@ -111,6 +113,9 @@ def score_run(case: dict, outs: list[dict], rows: list[dict] | None) -> dict:
     text = norm(reply)
     tools = {t for o in outs for t in o.get("tools_used", [])}
     ok_blocked = set(case.get("blocked_ok", []))
+    if tool_errors:
+        reasons.append(f"a tool crashed: {', '.join(sorted(set(tool_errors)))} (so the reply did not come from your data)")
+        flags.add("tool_failed")
 
     blocked_reasons = [o["blocked"] for o in outs if o.get("blocked") and o["blocked"] not in ok_blocked]
     for b in blocked_reasons:
@@ -174,6 +179,26 @@ def score_run(case: dict, outs: list[dict], rows: list[dict] | None) -> dict:
 
 
 # ---------------------------------------------------------------- running
+@contextlib.contextmanager
+def watch_tool_errors():
+    """Collect the names of tools that crashed (the dispatcher turns a crash into {"error": "tool_failed"}) while the block runs."""
+    from sjbot import router
+    failed: list[str] = []
+    real = router.run_tool
+
+    def spy(name, args, ctx=None):
+        result = real(name, args, ctx)
+        if isinstance(result, dict) and result.get("error") in ("tool_failed", "unknown_tool"):
+            failed.append(name)
+        return result
+
+    router.run_tool = spy
+    try:
+        yield failed
+    finally:
+        router.run_tool = real
+
+
 def run_case(case: dict, run_idx: int, answer_fn: Callable, llm: Any, subs: dict[str, str], rows: list[dict] | None,
              sleep: float = 0.0) -> dict:
     from sjbot.context import ChatContext
@@ -183,14 +208,16 @@ def run_case(case: dict, run_idx: int, answer_fn: Callable, llm: Any, subs: dict
     history: list[dict] = []
     outs: list[dict] = []
     t0, tok0 = time.monotonic(), getattr(llm, "tokens", 0) or 0
+    failed: list[str] = []
     try:
-        for q in questions:
-            out = answer_fn(q, llm, history, ctx=ctx)
-            outs.append(out)
-            history += [{"role": "user", "text": q}, {"role": "assistant", "text": out["reply"]}]
-            if sleep:
-                time.sleep(sleep)
-        scored = score_run(case, outs, rows)
+        with watch_tool_errors() as failed:
+            for q in questions:
+                out = answer_fn(q, llm, history, ctx=ctx)
+                outs.append(out)
+                history += [{"role": "user", "text": q}, {"role": "assistant", "text": out["reply"]}]
+                if sleep:
+                    time.sleep(sleep)
+        scored = score_run(case, outs, rows, failed)
     except Exception as exc:                                         # a crash is the bot's fault, unless it was the provider
         provider = any(w in type(exc).__name__.lower() for w in ("ratelimit", "timeout", "connection", "apistatus"))
         scored = result("infra" if provider else "fail", [f"raised {type(exc).__name__}: {exc}"], {"infra"} if provider else {"fallback"})
@@ -200,7 +227,7 @@ def run_case(case: dict, run_idx: int, answer_fn: Callable, llm: Any, subs: dict
         "tools": sorted({t for o in outs for t in o.get("tools_used", [])}),
         "blocked": [o.get("blocked") for o in outs], "turns": len(questions),
         "seconds": round(time.monotonic() - t0, 2), "tokens": max(0, (getattr(llm, "tokens", 0) or 0) - tok0),
-        "known_issue": case.get("known_issue"),
+        "known_issue": case.get("known_issue"), "model": getattr(llm, "model", None), "tool_errors": sorted(set(failed)),
     }
 
 
@@ -255,7 +282,7 @@ def summarize(records: list[dict]) -> dict:
         "flaky": sum(1 for s in scored_cases if s == "flaky"), "fail": sum(1 for s in scored_cases if s == "fail"),
         "bad_cases": [c for c, s in statuses.items() if s == "bad_case"], "infra_cases": [c for c, s in statuses.items() if s == "infra"],
         "runs_scored": n_runs, "runs_passed": sum(1 for r in counted if r["status"] == "pass"),
-        "false_none_runs": flag("false_none"), "invented_runs": flag("invented"), "leak_runs": flag("leak"), "fallback_runs": flag("fallback"),
+        "false_none_runs": flag("false_none"), "invented_runs": flag("invented"), "leak_runs": flag("leak"), "tool_failed_runs": flag("tool_failed"), "fallback_runs": flag("fallback"),
         "infra_runs": sum(1 for r in records if r["status"] == "infra"),
         "avg_seconds_per_question": round(sum(r["seconds"] for r in counted) / max(1, sum(r["turns"] for r in counted)), 1),
         "avg_tokens_per_question": round(sum(r["tokens"] for r in counted) / max(1, sum(r["turns"] for r in counted))),
@@ -269,13 +296,20 @@ def pct(k: int, n: int) -> str:
 def build_report(records: list[dict], model: str, skipped: list[str], when: str) -> str:
     s = summarize(records)
     lo, hi = wilson(s["stable_pass"], s["cases_scored"])
-    out = [f"# Bot accuracy report\n", f"Model: `{model}`   Date: {when}   Runs scored: {s['runs_scored']}   Cases scored: {s['cases_scored']}\n"]
+    used: dict[str, int] = defaultdict(int)
+    for r in records:
+        if r.get("model"):
+            used[r["model"]] += 1
+    shown = ", ".join(f"`{m}` ({n} runs)" for m, n in sorted(used.items())) or f"`{model}`"
+    out = [f"# Bot accuracy report\n", f"Model: {shown}   Date: {when}   Runs scored: {s['runs_scored']}   Cases scored: {s['cases_scored']}\n"]
+    if len(used) > 1:
+        out.append("**More than one model answered in this run** (the daily limit forced a switch), so read the scores as a mix, not as one model.\n")
     out.append("## Headline\n")
     out.append(f"- **Stable pass** (passes every run): **{s['stable_pass']} of {s['cases_scored']} = {pct(s['stable_pass'], s['cases_scored'])}** "
                f"(95% range {100 * lo:.0f}% to {100 * hi:.0f}%)")
     out.append(f"- Flaky (passes some runs): {s['flaky']}   Fail (passes none): {s['fail']}")
     out.append(f"- Single-run pass rate: {pct(s['runs_passed'], s['runs_scored'])}")
-    out.append(f"- **False \"nothing found\" answers: {s['false_none_runs']}**   Invented facts blocked: {s['invented_runs']}   Leaks: {s['leak_runs']}   Fallback replies: {s['fallback_runs']}")
+    out.append(f"- **False \"nothing found\" answers: {s['false_none_runs']}**   Invented facts blocked: {s['invented_runs']}   Leaks: {s['leak_runs']}   **Tool crashes: {s['tool_failed_runs']}**   Fallback replies: {s['fallback_runs']}")
     out.append(f"- Average per question: {s['avg_seconds_per_question']} s, {s['avg_tokens_per_question']} tokens")
     out.append(f"- Not counted: {s['infra_runs']} provider-error runs, {len(s['bad_cases'])} broken cases, {len(skipped)} skipped cases\n")
     out.append("## By type\n\n| Type | Cases | Stable pass | Flaky | Fail |\n|---|---|---|---|---|")
@@ -318,8 +352,26 @@ def select(cases: list[dict], only: str | None, limit: int | None) -> list[dict]
     return cases[:limit] if limit else cases
 
 
+def preflight(cases: list[dict]) -> str | None:
+    """Check the parts the questions depend on BEFORE any model tokens are spent. Returns a problem description or None."""
+    if not any(c["type"] in ("policy", "combined") or "search_policies" in c.get("tools_any", []) for c in cases):
+        return None
+    try:
+        from sjbot.tools.search_policies import search_policies
+        result = search_policies({"question": "return policy"})
+    except Exception as exc:
+        hint = ""
+        if "get_extended_attention_mask" in str(exc):
+            hint = ("\nThe embedding model's downloaded code needs an older `transformers` than the one installed. "
+                    "Try:  python -m pip install \"transformers<5\"   (then check:  python -m pip show transformers sentence-transformers)")
+        return f"the knowledge search (search_policies) is broken: {type(exc).__name__}: {exc}{hint}"
+    if not isinstance(result, dict) or result.get("error"):
+        return f"the knowledge search (search_policies) returned an error: {str(result)[:200]}"
+    return None
+
+
 def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | None = None, run_query: Callable | None = None,
-         cases: list[dict] | None = None) -> int:
+         cases: list[dict] | None = None, preflight_fn: Callable | None = None) -> int:
     ap = argparse.ArgumentParser(description="Measure bot accuracy.")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--only")
@@ -328,6 +380,8 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     ap.add_argument("--email")
     ap.add_argument("--sleep", type=float, default=0.0, help="seconds to wait between questions (helps with provider rate limits)")
     ap.add_argument("--resume")
+    ap.add_argument("--max-tokens", type=int, help="stop after about this many tokens, so a daily limit is not used up (continue with --resume)")
+    ap.add_argument("--skip-preflight", action="store_true", help="run even if the knowledge search is broken")
     ap.add_argument("--check-truth", action="store_true", help="run the ground-truth queries only; no model needed")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args(argv)
@@ -347,7 +401,7 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     truth = {c["id"]: fetch_truth(c, subs, run_query) for c in runnable}
 
     if args.check_truth:
-        broken = 0
+        broken = n_capped = 0
         for c in runnable:
             rows, err = truth[c["id"]]
             if not c.get("truth"):
@@ -355,11 +409,20 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
             t = c["truth"]
             bad = err or (not rows and not t.get("expect_empty")) or (rows and t.get("expect_empty"))
             broken += bool(bad)
+            m = re.search(r"LIMIT\s+(\d+)\s*$", t["sql"].strip(), re.I)
+            capped = bool(m and int(m.group(1)) > 1 and len(rows or []) >= int(m.group(1)))     # the answer key was cut off by its own LIMIT
+            n_capped += capped and not bad
             sample = ", ".join(str(r.get(t["col"])) for r in (rows or [])[:3])
-            print(f"{'BROKEN' if bad else 'ok    '} {c['id']:20} {len(rows or []):3} rows  {err or sample}")
-        print(f"\n{broken} broken ground-truth cases." + (f" Skipped (need --order/--email): {', '.join(skipped)}" if skipped else ""))
+            print(f"{'BROKEN' if bad else ('CAPPED' if capped else 'ok    ')} {c['id']:20} {len(rows or []):4} rows  {err or sample}")
+        print(f"\n{broken} broken ground-truth cases." + (f" {n_capped} CAPPED: the query hit its LIMIT, so valid answers beyond it would be marked wrong; raise the LIMIT." if n_capped else "")
+              + (f" Skipped (need --order/--email): {', '.join(skipped)}" if skipped else ""))
         return 1 if broken else 0
 
+    if not args.skip_preflight:
+        problem = (preflight_fn or preflight)(runnable)
+        if problem:
+            print(f"\nNot starting: {problem}\nFix that first (or use --skip-preflight to run anyway); no model tokens were used.")
+            return 2
     if llm is None:
         from sjbot.llm import get_llm
         llm = get_llm()
@@ -370,9 +433,11 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     path = Path(args.resume) if args.resume else RUNS_DIR / f"eval_{datetime.now():%Y%m%d_%H%M%S}.jsonl"
     done = {k for k, r in load_records(path).items() if r["status"] != "infra"}
     questions = sum(len(c["turns"]) for c in runnable)
-    print(f"{len(runnable)} cases x {args.runs} runs = {len(runnable) * args.runs} conversations, about {questions * args.runs * 5500:,} tokens."
+    print(f"Model: {getattr(llm, 'model', 'unknown')}  ({type(llm).__name__})")
+    print(f"{len(runnable)} cases x {args.runs} runs = {len(runnable) * args.runs} conversations, about {questions * args.runs * 10000:,} tokens (measured: roughly 10,000 per question)."
           f" Saving to {path}" + (f"  (skipping {len(skipped)} cases that need --order/--email)" if skipped else ""))
-    infra_streak = 0
+    infra_streak, stop = 0, False
+    start_tokens = getattr(llm, "tokens", 0) or 0
     with path.open("a", encoding="utf8") as f:
         for run_idx in range(1, args.runs + 1):
             for c in runnable:
@@ -390,10 +455,14 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
                 infra_streak = infra_streak + 1 if rec["status"] == "infra" else 0
                 if infra_streak >= 3:
                     print(f"\nStopping: 3 provider errors in a row (rate limit?). Continue later with:\n  python eval_accuracy.py --resume {path}")
+                    stop = True
+                elif args.max_tokens and (getattr(llm, "tokens", 0) or 0) - start_tokens >= args.max_tokens:
+                    print(f"\nStopping: reached the --max-tokens budget ({args.max_tokens:,}). Continue later with:\n  python eval_accuracy.py --resume {path}")
+                    stop = True
+                if stop:
                     break
-            else:
-                continue
-            break
+            if stop:
+                break
     records = list(load_records(path).values())
     report = build_report(records, getattr(llm, "model", "unknown"), skipped, when)
     report_path = path.with_suffix(".md")
@@ -401,7 +470,7 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     print("\n" + report.split("## By type")[0])
     print(f"Full report: {report_path}")
     s = summarize(records)
-    return 1 if (s["fail"] or s["flaky"] or s["invented_runs"] or s["leak_runs"]) else 0
+    return 1 if (s["fail"] or s["flaky"] or s["invented_runs"] or s["leak_runs"] or s["tool_failed_runs"]) else 0
 
 
 if __name__ == "__main__":

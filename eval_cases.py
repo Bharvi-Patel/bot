@@ -22,6 +22,8 @@ Store details below (phone, hours, shipping rate) come from the dev database; ch
 from __future__ import annotations
 
 SOFA = "name LIKE '%Sofa%' AND name NOT LIKE '%Table%' AND name NOT LIKE '%Sectional%'"
+DESK = ("name LIKE '%Desk%' AND name NOT LIKE '%Lamp%' AND name NOT LIKE '%Chair%' AND name NOT LIKE '%Pad%' "
+        "AND name NOT LIKE '%Organizer%'")
 BED = "(name LIKE '%Bed' OR name LIKE '% Bed %' OR name LIKE '%Bed,%') AND name NOT LIKE '%Pillow%'"
 
 
@@ -29,7 +31,17 @@ def C(id: str, type: str, *turns: str, **kw) -> dict:
     return {"id": id, "type": type, "turns": list(turns), **kw}
 
 
-def under(where: str, limit: float, n: int = 500) -> dict:
+def in_category(title_like: str, limit: float, exclude: str = "", n: int = 5000) -> dict:
+    """Products filed under a category (and their variants), for things whose NAMES do not say what they are:
+    a rug may be called "WAVES COLLECTION - WV01". Same join the search tool uses."""
+    cats = ("SELECT pc.product_uuid FROM vw_chat_product_categories pc JOIN vw_chat_categories c ON c.category_uuid = pc.category_uuid "
+            f"WHERE c.title LIKE '{title_like}'" + (f" AND c.title NOT LIKE '{exclude}'" if exclude else ""))
+    return {"sql": f"SELECT p.name, p.price FROM vw_chat_products p WHERE p.price <= %s AND "
+                   f"(p.product_uuid IN ({cats}) OR p.parent_uuid IN ({cats})) ORDER BY p.price LIMIT {n}",
+            "params": [limit], "col": "name", "price_col": "price"}
+
+
+def under(where: str, limit: float, n: int = 5000) -> dict:
     """Every product that satisfies the request, not just the cheapest few: a reply that lists other valid products is correct."""
     return {"sql": f"SELECT name, price FROM vw_chat_products WHERE {where} AND price <= %s ORDER BY price LIMIT {n}",
             "params": [limit], "col": "name", "price_col": "price"}
@@ -45,8 +57,8 @@ CASES = [
     C("sofa-100-none", "product_search", "can u show me sofas under $100", truth={**under(SOFA, 100), "expect_empty": True}),
     C("beds-500", "product_search", "show beds under $500", truth={**under(BED, 500), "min_hits": 1}, prices=True, max_price=500),
     C("beds-200", "product_search", "okay show me beds under $200", truth={**under(BED, 200), "min_hits": 1}, prices=True, max_price=200),
-    C("desk-300", "product_search", "I need a desk under $300", truth={**under("name LIKE '%Desk%'", 300), "min_hits": 1}, prices=True, max_price=300),
-    C("rug-200", "product_search", "show me rugs under $200", truth={**under("name LIKE '%Rug%'", 200), "min_hits": 1}, prices=True, max_price=200),
+    C("desk-300", "product_search", "I need a desk under $300", truth={**under(DESK, 300), "min_hits": 1}, prices=True, max_price=300),
+    C("rug-200", "product_search", "show me rugs under $200", truth={**in_category("%Rug%", 200, exclude="%Decor%"), "min_hits": 1}, prices=True, max_price=200),
     C("mattress-cheapest", "product_search", "what is the cheapest queen mattress?",
       truth={"sql": "SELECT name, price FROM vw_chat_products WHERE name LIKE '%Queen%Mattress%' ORDER BY price LIMIT 1",
              "col": "name", "price_col": "price", "min_hits": 1}, prices=True),
