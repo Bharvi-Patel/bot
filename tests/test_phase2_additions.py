@@ -60,7 +60,8 @@ def test_search_reports_products_without_size_data():
 def test_search_without_width_filter_makes_one_query_and_no_size_fields():
     calls = []
     out = search_products({"max_price": 500}, run_query=lambda s, p=(): calls.append(s) or [])
-    assert len(calls) == 1 and "without_size_data" not in out
+    # an empty result under a price limit also runs one "nearest products" lookup, but never the missing-size count
+    assert len(calls) == 2 and not any("COUNT(DISTINCT" in c for c in calls) and "without_size_data" not in out
 
 
 def test_zero_missing_means_no_size_note():

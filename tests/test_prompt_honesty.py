@@ -30,3 +30,7 @@ def test_price_from_the_bots_own_earlier_reply_is_allowed_but_new_prices_are_not
 
 def test_prompt_forbids_made_up_budget_numbers():
     assert "Never write a dollar amount unless the customer said it or a tool result shows it" in g.SYSTEM_PROMPT
+
+def test_prompt_keeps_the_product_type_the_customer_asked_for():
+    assert "The product you name must be the type the customer asked for" in g.SYSTEM_PROMPT
+    assert "Never present a different type (a platform bed for a mattress) as the answer" in g.SYSTEM_PROMPT

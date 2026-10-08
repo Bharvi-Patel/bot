@@ -240,3 +240,23 @@ def test_results_are_never_second_guessed_when_products_were_found():
 
 def test_prompt_forbids_guessing_slugs():
     assert "never guess or shorten a slug" in g.SYSTEM_PROMPT
+
+# ---------- "cheapest?" after a capped, name-sorted list; "other options" after an empty result ----------
+def test_truncated_name_sorted_list_warns_not_to_call_anything_cheapest():
+    rows = [dict(SOFA_ROWS[0], sku=f"S{i}") for i in range(8)]
+    out = search_products({"keyword": "sofa", "max_price": 1000}, run_query=lambda sql, params=(): [dict(r) for r in rows])
+    assert out["sorted_by"] == "name" and "NOT sorted by price" in out["note"] and "sort=price_asc" in out["note"]
+    cheap = search_products({"keyword": "sofa", "sort": "price_asc"}, run_query=lambda sql, params=(): [dict(r) for r in rows])
+    assert "first one is the cheapest" in cheap["note"]
+
+
+def test_empty_result_under_a_limit_returns_the_real_nearest_products():
+    calls = []
+
+    def db(sql, params=()):
+        calls.append(params)
+        return [] if 100.0 in params else [dict(r) for r in SOFA_ROWS]
+    out = search_products({"keyword": "sofa", "max_price": 100}, run_query=db)
+    assert out["count"] == 0 and out["cheapest_over_limit"][0]["price"] == 455.83
+    assert "Never invent" in out["note"]
+    assert g.check_reply("Nothing under $100, but the Clearbrooke Sofa is $455.83.", [out], "show me sofas under $100", "{}") == (True, None)

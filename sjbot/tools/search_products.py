@@ -276,8 +276,16 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
     applied = {k: args[k] for k in ("min_price", "max_price") if args.get(k) is not None}
     if applied:
         result["applied_filters"] = applied                  # the price limits actually used, so the reply may state them
+    sort_used = args.get("sort") or "name"
+    result["sorted_by"] = sort_used
     if len(rows) == MAX_RESULTS:
-        result["note"] = f"Showing the first {MAX_RESULTS} matches; there may be more. Suggest narrowing the filters."
+        result["note"] = (f"Showing only the first {MAX_RESULTS} matches, sorted by {sort_used}; there are probably more, so do NOT "
+                          f"say these are all of them; suggest narrowing the filters. ")
+        if sort_used == "price_asc":
+            result["note"] += "They are the cheapest matches, so the first one is the cheapest."
+        else:
+            result["note"] += ("This list is NOT sorted by price, so never call any of these the cheapest or priciest. "
+                               "For 'cheapest' / 'most expensive' search again with the same filters and sort=price_asc / price_desc.")
     if not rows and args.get("category_slug"):
         unknown = _unknown_category(str(args["category_slug"]).strip(), run_query)
         if unknown:
@@ -291,6 +299,22 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
             result["note"] = ("No product with a width on file fits that size limit. Do NOT say the catalog has no such products: "
                               "say that none of the ones with a listed width fit, mention any without size data (see size_note), "
                               "and suggest a larger limit or confirming sizes with the store.")
+
+    if not rows and applied.get("max_price") is not None and args.get("max_width_in") is None:
+        # Nothing under the limit: look up what really exists just above it, so the reply quotes real products and
+        # prices instead of the model guessing a higher limit.
+        try:
+            near_sql, near_params = build_search_query({**{k: v for k, v in args.items() if k != "max_price"}, "sort": "price_asc"})
+            near = run_query(near_sql, near_params)[:3]
+        except ToolInputError:
+            near = []
+        for row in near:
+            row["main_image"] = full_image_url(row.get("main_image"))
+        if near:
+            result["cheapest_over_limit"] = near
+            result["note"] = ("Nothing matched at or under that price. Say so, then in the SAME reply list the products in "
+                              "cheapest_over_limit (name and real price) as the closest options; do not just ask whether the "
+                              "customer wants to see them. Never invent a new price limit.")
 
     if missing is not None:
         n = int(run_query(*missing)[0]["n"])

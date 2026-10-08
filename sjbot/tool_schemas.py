@@ -21,7 +21,8 @@ TOOL_DECLARATIONS: list[dict] = [
     _tool(
         "search_products",
         "Filter the catalog by price, category, brand, color, material, size or keyword. Returns real products with live "
-        "prices. Use for 'show me ...' and 'cheapest ...' questions. Get category_slug from list_categories first.",
+        "prices. Use for 'show me ...' and 'cheapest ...' questions. Get category_slug from list_categories first. "
+        "Shows at most 8 results sorted by name unless you set sort: for cheapest use sort=price_asc, for most expensive price_desc.",
         {
             "keyword": {**_STR, "description": "Words from the product name, e.g. 'loveseat'."},
             "category_slug": {**_STR, "description": "Slug returned by list_categories."},
