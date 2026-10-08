@@ -61,6 +61,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
 
     messages = _clean_history(history) + [{"role": "user", "text": question}]
     user_said = " ".join(m["text"] for m in messages if m["role"] == "user")   # figures the customer typed earlier may be repeated
+    earlier_replies = " ".join(m["text"] for m in messages if m["role"] == "assistant")   # prices we already told them
     results: list[dict] = []
     contact_results: list[dict] = []                     # results whose phones/emails the reply may repeat
     tools_used: list[str] = []
@@ -98,7 +99,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     if reply is not None:
         trusted = store_contact_text()
         with tracing.span("reply_check", input=reply) as sp:
-            ok, why = check_reply(reply, results, user_said, trusted, contact_results)
+            ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
             sp.update(output={"ok": ok, "reason": why})
         for _ in range(2):                                             # right answer, bad contact line or link: fix it
             if ok or why not in ("unknown_email", "unknown_phone", "unknown_link"):
@@ -110,7 +111,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             log.warning("repaired reply (%s)", why)
             log_for_review(question, f"repaired_{why}", tools_used)
             reply = fixed
-            ok, why = check_reply(reply, results, user_said, trusted, contact_results)
+            ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
         if not ok:
             reply, reason = None, why
 

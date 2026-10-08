@@ -56,6 +56,23 @@ NOTE_NOT_FOUND = (
 )
 
 
+# Page text written by people sometimes names another showroom (e.g. the Financing page). Sentences matching this are removed
+# before the model sees them, so it cannot repeat them. Set SJ_RAG_SCRUB in .env to a different regex, or to "" to turn it off.
+_SCRUB_PATTERN = os.environ.get("SJ_RAG_SCRUB", r"\b(?:brooklyn|jamaica)\b")
+SCRUB = re.compile(_SCRUB_PATTERN, re.I) if _SCRUB_PATTERN else None
+
+
+def scrub_text(text: str) -> str:
+    """Drop every sentence (or line) that matches SCRUB; leave the rest of the chunk untouched."""
+    if not SCRUB or not SCRUB.search(text):
+        return text
+    kept = []
+    for line in text.split("\n"):
+        parts = re.split(r"(?<=[.!?])\s+", line)
+        kept.append(" ".join(p for p in parts if not SCRUB.search(p)))
+    return "\n".join(kept)
+
+
 def _default_run_query(sql: str, params: list) -> list[dict]:
     import psycopg
     from psycopg.rows import dict_row
@@ -126,7 +143,7 @@ def search_policies(args: dict[str, Any], run_query: Callable | None = None, emb
         "chunks": [{
             "title": r["title"], "heading": r["heading"], "page": r["url_path"],
             "source_type": r["source_type"], "source_key": r["source_key"],
-            "similarity": round(float(r["similarity"]), 3), "content": r["content"],
+            "similarity": round(float(r["similarity"]), 3), "content": scrub_text(r["content"]),
         } for r in kept],
         "note": NOTE_FOUND,
     }

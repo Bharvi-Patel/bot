@@ -64,3 +64,12 @@ def test_db_failure_returns_safe_error():
     def boom(sql, params): raise RuntimeError("connection refused host=secret")
     out = search_policies({"question": "returns"}, run_query=boom, embed_query=fake_embed)
     assert out["error"] == "policy search is unavailable right now" and "secret" not in str(out)
+
+
+def test_other_showroom_sentences_are_removed_before_the_model_sees_them():
+    from sjbot.tools.search_policies import scrub_text
+    text = "Snap Finance welcomes all credit types. Visit our showroom in Brooklyn or Jamaica, Queens for help. Terms are set by the lender."
+    out = scrub_text(text)
+    assert "Brooklyn" not in out and "Jamaica" not in out
+    assert "Snap Finance welcomes all credit types." in out and "Terms are set by the lender." in out
+    assert scrub_text("Nothing to remove here.") == "Nothing to remove here."

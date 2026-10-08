@@ -34,7 +34,8 @@ NONE_FOUND = re.compile(
     r"couldn.?t find|could not find|did not find|didn.?t find|not able to find|unable to find|don.?t see any|"
     r"\bno (?:\w+ ){0,2}(?:products|results|sofas|beds|desks|rugs|items|matches|options)|none (?:found|available)|"
     r"\bno .{0,40}(?:found|available|match)", re.I)
-REFUSAL = re.compile(r"can.?t|cannot|unable|not able|sorry|don.?t have|do not have|no information|not sure|not available|contact the store|please call", re.I)
+REFUSAL = re.compile(r"can.?t|cannot|unable|not able|sorry|don.?t have|do not have|no information|not sure|not available|contact the store|please call|"
+                     r"couldn.?t find|could not find|didn.?t find|did not find|trouble finding", re.I)
 MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)")
 FALLBACK_TEXT = "can't answer that reliably"
 RUNS_DIR = Path("eval_runs")
