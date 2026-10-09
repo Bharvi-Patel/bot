@@ -32,7 +32,9 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,190}\.[A-Za-z]{2,
 
 NO_MATCH = {
     "found": False,
-    "note": ("No order matches those details. Do not say whether the order number exists or which detail was wrong. "
+    "note": ("No order matches those details. Begin your reply by saying you couldn't find an order matching those details, "
+             "then ask them to double-check the order number and the billing email. "
+             "Do not say whether the order number exists or which detail was wrong. "
              "Tell the customer to check the order number and the billing email, or contact the store "
              "(use get_store_info for the phone or email). Never guess or try other numbers."),
 }
@@ -45,7 +47,7 @@ NOT_AVAILABLE = {
     "error": "verification_unavailable",
     "note": "Order lookup is not available right now. Tell the customer to contact the store (use get_store_info).",
 }
-STATUS_NOTE = ("Say only that the order is marked with this status. Do not say whether payment was received, and do "
+STATUS_NOTE = ("Begin your reply with the order's status, for example \"Order 1234 is marked Processing\", using the order_status and order number in this result, and list the items if the customer asked about them. Never reply with only the store's phone and email. Say only that the order is marked with this status. Do not say whether payment was received, and do "
                "not promise shipping, delivery dates, tracking or cancellation: none of that is on file. "
                "You cannot cancel, change, refund or return an order. If the customer asked for any of that, say plainly that it "
                "cannot be done in this chat, then give the store's phone and email so they can ask the store (use get_store_info). "

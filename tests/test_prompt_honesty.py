@@ -69,3 +69,39 @@ def test_top_level_category_listing_tells_the_model_to_name_the_categories():
     out = list_categories({}, run_query=lambda *_: rows)
     assert "Tell the customer these category names" in out["note"]
     assert "note" not in list_categories({"parent_slug": "bedroom"}, run_query=lambda *_: rows)
+
+
+def test_cancel_rule_forbids_inventing_order_details():
+    assert "do not state any order details (total, items, dates, status) unless get_order_status returned them in this turn" in g.SYSTEM_PROMPT
+
+
+def test_order_change_requests_get_the_fixed_reply_but_policy_and_status_questions_do_not():
+    for q in ["can I cancel order 102500001? my email is a@b.com", "I want to cancel my order", "please cancel my order",
+              "Cancel order 102500001", "could you change my order", "I\u2019d like to cancel my order", "can I refund my purchase"]:
+        assert g.is_order_change_request(q), q
+    for q in ["what is your cancellation policy", "what's your policy on cancelling an order", "where is my order 123?",
+              "where is my order and can I cancel the order", "can I return a mattress?", "can you change the color of this sofa",
+              "show me sofas under $500"]:
+        assert not g.is_order_change_request(q), q
+    assert "can't cancel" in g.ORDER_CHANGE_REPLY and "contact" in g.ORDER_CHANGE_REPLY
+
+
+def test_router_answers_cancel_requests_without_calling_the_model():
+    from sjbot import router
+
+    class Boom:
+        def generate(self, *_a, **_k):
+            raise AssertionError("the model must not be called")
+    out = router._answer("can I cancel order 102500001? my email is a@b.com", Boom())
+    assert out["blocked"] == "order_change_request" and out["tools_used"] == []
+    assert "can't cancel" in out["reply"]
+
+
+def test_order_notes_tell_the_model_to_answer_before_giving_contact_details():
+    from sjbot.tools import get_order_status as gos
+    assert "Begin your reply with the order's status" in gos.STATUS_NOTE
+    assert "Never reply with only the store's phone and email" in gos.STATUS_NOTE
+    assert "Do not say whether payment was received" in gos.STATUS_NOTE and "Never repeat the customer's email" in gos.STATUS_NOTE
+    note = gos.NO_MATCH["note"]
+    assert "couldn't find an order matching those details" in note and "double-check" in note
+    assert "Do not say whether the order number exists or which detail was wrong" in note

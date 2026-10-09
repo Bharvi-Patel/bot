@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, MAX_TOOL_CALLS_PER_TURN, check_reply, is_extraction_attempt,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, check_reply, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -58,6 +58,10 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     if is_extraction_attempt(question):                 # asks for our prompt, tools or database: the model never sees it
         log_for_review(question, "extraction_attempt", [])
         return {"reply": EXTRACTION_REPLY, "tools_used": [], "blocked": "extraction_attempt"}
+
+    if is_order_change_request(question):               # cancel / change / refund an order: fixed reply, the model never sees it
+        log_for_review(question, "order_change_request", [])
+        return {"reply": ORDER_CHANGE_REPLY, "tools_used": [], "blocked": "order_change_request"}
 
     messages = _clean_history(history) + [{"role": "user", "text": question}]
     user_said = " ".join(m["text"] for m in messages if m["role"] == "user")   # figures the customer typed earlier may be repeated
