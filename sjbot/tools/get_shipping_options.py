@@ -54,6 +54,8 @@ def get_shipping_options(args: dict[str, Any], run_query: Callable | None = None
         "zones": [{"zone": z, "methods": m} for z, m in zones.items()],
         "note": (
             "Prices are the store's flat rates only; weight-based or free-shipping rules may exist that "
-            "are not shown here. Never promise a delivery date: none is on file."
+            "are not shown here. Never promise a delivery date: none is on file. If the customer asks how long delivery takes or "
+            "when something will arrive, begin your reply with \"I don't have delivery time information\" (do not say the store does not "
+            "provide delivery dates), then give the shipping prices and suggest contacting the store."
         ),
     }

@@ -50,6 +50,14 @@ NOTE_FOUND = (
     "use the SQL tools for those. No medical claims. If the chunks do not fully answer the question, say what they do "
     "say and point the customer to the store phone or email (get_store_info)."
 )
+WEAK_MATCH = 0.65   # best chunk below this: the pages are only loosely related to the question
+NOTE_WEAK = (
+    "These pages are only loosely related to the question. First check whether they directly answer it. If they do not "
+    "(for example financing or warranty text for a question about coupons or cleaning), begin your reply by saying you "
+    "don't have that information, then point the customer to the store phone or email (get_store_info). "
+    "Never say the store does or does not offer something unless these pages say so. "
+)
+
 NOTE_NOT_FOUND = (
     "Nothing in the store's policy text covers this. Do NOT answer from general knowledge or guess. "
     "Say you don't have that information and point the customer to the store phone or email (get_store_info)."
@@ -145,5 +153,5 @@ def search_policies(args: dict[str, Any], run_query: Callable | None = None, emb
             "source_type": r["source_type"], "source_key": r["source_key"],
             "similarity": round(float(r["similarity"]), 3), "content": scrub_text(r["content"]),
         } for r in kept],
-        "note": NOTE_FOUND,
+        "note": (NOTE_WEAK if max(float(r["similarity"]) for r in kept) < WEAK_MATCH else "") + NOTE_FOUND,
     }

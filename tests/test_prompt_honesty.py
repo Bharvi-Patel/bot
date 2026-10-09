@@ -105,3 +105,83 @@ def test_order_notes_tell_the_model_to_answer_before_giving_contact_details():
     note = gos.NO_MATCH["note"]
     assert "couldn't find an order matching those details" in note and "double-check" in note
     assert "Do not say whether the order number exists or which detail was wrong" in note
+
+
+def test_weak_policy_matches_carry_a_warning_note_and_strong_ones_do_not():
+    from sjbot.tools.search_policies import NOTE_WEAK, search_policies
+    def row(sim):
+        return {"id": 1, "source_type": "policy", "source_key": "financing", "title": "Financing", "heading": "Financing",
+                "url_path": "/financing", "content": "text", "similarity": sim}
+    def run(sim):
+        return lambda sql, params: [row(sim)] if "ORDER BY embedding" in sql else []
+    weak = search_policies({"question": "are there any coupon codes?"}, embed_query=lambda q: [0.1, 0.2], run_query=run(0.60))
+    strong = search_policies({"question": "what is the return policy?"}, embed_query=lambda q: [0.1, 0.2], run_query=run(0.70))
+    assert weak["found"] and weak["note"].startswith(NOTE_WEAK) and "don't have that information" in weak["note"]
+    assert strong["found"] and not strong["note"].startswith(NOTE_WEAK)
+
+
+def test_prompt_tells_the_model_how_to_follow_up_on_an_earlier_item():
+    assert "call search_products with its name to get the sku, then call get_product_details with that sku" in g.SYSTEM_PROMPT
+
+
+WEAK = [{"found": True, "cutoff": 0.55, "chunks": [{"similarity": 0.60}]}]
+STRONG = [{"found": True, "cutoff": 0.55, "chunks": [{"similarity": 0.72}]}]
+NOTHING = [{"found": False, "cutoff": 0.55, "best_similarity": 0.4}]
+CONTACT_ONLY = "You can reach us at (731) 423-1234 or shop@example.com for cleaning advice on your fabric sofa."
+
+
+def test_contact_only_reply_after_a_weak_policy_search_gets_a_no_info_prefix():
+    tools = ["get_store_info", "search_policies"]
+    for results in (WEAK, NOTHING):
+        out = g.add_no_info_prefix(CONTACT_ONLY, results, "how do I clean a fabric sofa?", tools)
+        assert out.startswith("I don't have that information. ") and out.endswith(CONTACT_ONLY)
+
+
+def test_no_prefix_when_the_answer_is_real_or_the_question_is_about_the_store():
+    tools = ["get_store_info", "search_policies"]
+    q = "how do I clean a fabric sofa?"
+    assert g.add_no_info_prefix(CONTACT_ONLY, STRONG, q, tools) == CONTACT_ONLY                       # solid match
+    assert g.add_no_info_prefix(CONTACT_ONLY, WEAK, "what are your hours?", tools) == CONTACT_ONLY    # store-info question
+    already = "I couldn't find that. Call (731) 423-1234."
+    assert g.add_no_info_prefix(already, WEAK, q, tools) == already                                   # already declines
+    long_answer = "Our returns page says " + "word " * 60 + "call (731) 423-1234."
+    assert g.add_no_info_prefix(long_answer, WEAK, q, tools) == long_answer                           # real answer
+    assert g.add_no_info_prefix("We only ship inside the USA.", WEAK, q, tools) == "We only ship inside the USA."   # no contact line
+    assert g.add_no_info_prefix(CONTACT_ONLY, WEAK, q, ["search_products", "search_policies"]) == CONTACT_ONLY       # other tools involved
+    assert g.add_no_info_prefix(CONTACT_ONLY, WEAK, q, ["get_store_info"]) == CONTACT_ONLY            # no policy search ran
+
+
+def test_shipping_note_tells_the_model_to_say_it_has_no_delivery_time_information():
+    from sjbot.tools.get_shipping_options import get_shipping_options
+    rows = [{"zone_name": "USA", "method_name": "Local", "flat_price": 299, "note": None}]
+    out = get_shipping_options({}, run_query=lambda *_: rows)
+    assert "I don't have delivery time information" in out["note"] and "Never promise a delivery date" in out["note"]
+
+
+def test_price_superlative_questions_need_a_fresh_product_search():
+    assert g.needs_fresh_price_search("which one is the cheapest?", [])
+    assert g.needs_fresh_price_search("what is your most expensive mattress", ["list_categories"])
+    assert not g.needs_fresh_price_search("which one is the cheapest?", ["search_products"])        # already searched this turn
+    assert not g.needs_fresh_price_search("what is the cheapest shipping option?", [])              # not a product question
+    assert not g.needs_fresh_price_search("show me sofas under $500", [])
+
+
+def test_router_makes_the_model_search_again_before_answering_cheapest_from_memory(monkeypatch):
+    from sjbot import router
+    from sjbot.llm_base import LLMTurn, ToolCall
+    seen = []
+
+    class LLM:
+        turns = [LLMTurn(text="The cheapest is the 110 LATTE at $798."),                                   # wrong: from memory
+                 LLMTurn(tool_calls=[ToolCall("search_products", {"sort": "price_asc"})]),
+                 LLMTurn(text="The cheapest is the Greenbriar Sofa at $215.")]
+        def generate(self, messages):
+            seen.append(list(messages))
+            return self.turns.pop(0)
+
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"products": [{"name": "Greenbriar Sofa", "price": 215.0}]})
+    history = [{"role": "user", "text": "show me sofas under $1000"},
+               {"role": "assistant", "text": "110 LATTE - $798.00, 110 Black - $998.00"}]
+    out = router.answer("which one is the cheapest?", LLM(), history)
+    assert out["tools_used"] == ["search_products"] and "Greenbriar" in out["reply"] and "798" not in out["reply"]
+    assert "Search the catalog now" in seen[1][-1]["text"]

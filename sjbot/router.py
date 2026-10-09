@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, check_reply, is_extraction_attempt, is_order_change_request,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, CHEAPEST_NUDGE, check_reply, needs_fresh_price_search, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     tools_used: list[str] = []
     reply: str | None = None
     reason: str | None = None
+    nudged = False
 
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
@@ -80,6 +81,11 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             reason = "llm_error"
             break
         if not turn.tool_calls:
+            if not nudged and needs_fresh_price_search(question, tools_used):      # answering "cheapest" from memory: make it search
+                nudged = True
+                messages.append({"role": "assistant", "text": turn.text})
+                messages.append({"role": "user", "text": CHEAPEST_NUDGE})
+                continue
             reply = turn.text
             break
         messages.append({"role": "assistant", "text": turn.text, "tool_calls": turn.tool_calls, "raw": turn.raw})
@@ -118,6 +124,8 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
         if not ok:
             reply, reason = None, why
+        else:
+            reply = add_no_info_prefix(reply, results, question, tools_used)
 
     if reply is None:
         log_for_review(question, reason or "unknown", tools_used)

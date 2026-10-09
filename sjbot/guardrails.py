@@ -96,6 +96,7 @@ Rules:
 - If a category title joins several things (for example "Rugs and Decor", which also holds sculptures and accent tables), do not search it. Use its child category whose title is just the product type (for example "Rugs", slug rugs-and-decor-rugs), and never list sculptures, tables or other items as rugs. If list_categories shows has_subcategories true for a category that fits, search that category rather than a broader parent.
 - The product you name must be the type the customer asked for. A broad category (such as Mattresses and Bedding, which also holds bed bases and platform beds) can return other types, so also pass the customer's own word as keyword to search_products (for example keyword 'mattress'). If the first or cheapest result's name does not contain the type they asked for, search again with that word as keyword. Never present a different type (a platform bed for a mattress) as the answer; if there is none of that type, say so.
 - Only when the customer asks which product is the cheapest, lowest-priced, most expensive or highest-priced: call search_products with sort set to price_asc (cheapest first) or price_desc (most expensive first), plus the category_slug and any price limit, and answer with the first result. The default order is by name, so never pick the cheapest from a name-sorted list. For "show me", "any" or "under $X" questions, keep the default order and list up to 5 of the results, each with its name and price; do not answer with only the cheapest one.
+- When the customer refers to an item you listed earlier (\"the first one\", \"that sofa\", \"show me a picture of it\"), you no longer have its sku: call search_products with its name to get the sku, then call get_product_details with that sku, and give image links from the result as plain URLs.
 - Follow-up questions about products or prices (which is cheapest, compare them, anything under a different budget): call the search tool again and answer from its result, never from earlier messages.
 - Health or comfort questions about a product (for example the best mattress for back pain): still call recommend_products or search_products and list options with the facts the tools return; do not refuse to search and do not offer to search later.
 - If a search finds nothing and the customer asks for other options, widen it (a higher price limit, a looser filter), run the search again, and say what you widened. Mention a price limit only if the customer gave it or the search result lists it under applied_filters.
@@ -149,6 +150,56 @@ _ORDER_CHANGE = re.compile(
     rf"|\b(?:i|we)(?:'d|\s+would)?\s+(?:want|need|wish|like|have)\s+to\s+{_VERB}\b{_TARGET}"
     rf"|^\s*(?:please\s+|pls\s+)?{_VERB}\b{_TARGET}", re.I)
 _STATUS_WORDS = re.compile(r"\b(?:where|status|track|tracking|when)\b", re.I)
+
+
+WEAK_POLICY_MATCH = 0.65          # keep in step with search_policies.WEAK_MATCH
+_DECLINE = re.compile(r"don'?t have|do not have|couldn'?t find|could not find|can'?t|cannot|unable|not sure|no information|"
+                      r"not available|sorry|trouble finding|don'?t see", re.I)
+_STORE_INFO_QUESTION = re.compile(r"\b(?:phone|number|e-?mail|call|contact|hours?|open|opens|close|closes|closed|address|location|"
+                                  r"located|where are you|reach|directions|pick-?\s?up)\b", re.I)
+
+
+def _policy_searches_all_weak(results: list) -> bool:
+    """True if search_policies ran and none of its results had a solid match (only those results carry a 'cutoff' key)."""
+    seen = [r for r in results if isinstance(r, dict) and "cutoff" in r]
+    if not seen:
+        return False
+    for r in seen:
+        sims = [c.get("similarity", 0) for c in r.get("chunks", [])] if r.get("found") else []
+        if sims and max(sims) >= WEAK_POLICY_MATCH:
+            return False
+    return True
+
+
+def add_no_info_prefix(reply: str, results: list, question: str, tools_used: list) -> str:
+    """A short reply that only points the customer to the store, after a policy search with no solid match, must first say
+    we don't have the information; otherwise it reads as if the store will supply the answer ("contact us for cleaning advice").
+    Does nothing for store-info questions (hours, phone, address), long answers, or replies that already decline."""
+    text = reply.replace("\u2019", "'")
+    if not set(tools_used) <= {"search_policies", "get_store_info"} or "search_policies" not in tools_used:
+        return reply
+    if _STORE_INFO_QUESTION.search(question) or _DECLINE.search(text) or len(text.split()) > 45:
+        return reply
+    if not ("@" in text or _PHONE.search(text) or "[phone]" in text or "[email]" in text):
+        return reply
+    if not _policy_searches_all_weak(results):
+        return reply
+    return "I don't have that information. " + reply
+
+
+_PRICE_SUPERLATIVE = re.compile(r"\b(?:cheapest|least\s+expensive|lowest[\s-]+priced?|lowest\s+price|most\s+expensive|highest[\s-]+priced?|"
+                                r"highest\s+price|priciest)\b", re.I)
+_NOT_ABOUT_PRODUCTS = re.compile(r"\b(?:shipping|ship|delivery|financ\w*|warranty|protection|fee|fees|payment|pay)\b", re.I)
+PRODUCT_SEARCH_TOOLS = {"search_products", "recommend_products"}
+CHEAPEST_NUDGE = ("Search the catalog now: call search_products with sort price_asc (cheapest) or price_desc (most expensive), "
+                  "the same category_slug and any price limit, then answer from that result only. Do not answer from earlier messages.")
+
+
+def needs_fresh_price_search(question: str, tools_used: list) -> bool:
+    """'Which is the cheapest?' must be answered from a search made now, never from a list shown earlier (that list is only
+    the first few results, not the cheapest ones)."""
+    return (bool(_PRICE_SUPERLATIVE.search(question)) and not _NOT_ABOUT_PRODUCTS.search(question)
+            and not (PRODUCT_SEARCH_TOOLS & set(tools_used)))
 
 
 def is_order_change_request(text: str) -> bool:
