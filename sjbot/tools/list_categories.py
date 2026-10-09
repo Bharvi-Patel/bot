@@ -98,4 +98,6 @@ def list_categories(args: dict[str, Any], run_query: Callable | None = None) -> 
         }
 
     roots = sorted((r for r in rows if _is_root(r)), key=lambda r: r["title"])
-    return {"categories": [brief(r) for r in roots]}
+    return {"categories": [brief(r) for r in roots],
+            "note": "Tell the customer these category names (all of them, briefly, in one sentence or a short list). "
+                    "Do not describe them in general terms and do not answer with a question instead."}
