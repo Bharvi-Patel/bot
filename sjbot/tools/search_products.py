@@ -24,6 +24,9 @@ SORTS = {
 
 # One product family = the parent and all its variants. A product with no parent is its own family.
 FAMILY = "COALESCE(NULLIF(p.parent_uuid, ''), p.product_uuid)"
+SIZE_GROUP = "Bed Size"          # variants carry their size here; the category ("Queen") sits on the parent family only
+SIZE_TITLES = ("Twin", "Twin XL", "Full", "Full XL", "Queen", "King", "California King", "Cal King")
+_SIZE_TITLES_SQL = ", ".join(f"'{t}'" for t in SIZE_TITLES)     # fixed constants from this file, never user input
 
 ALLOWED_KEYS = {
     "keyword", "category_slug", "brand_slug", "min_price", "max_price",
@@ -134,9 +137,9 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
         # The category plus everything below it. parent_id is the parent's integer category_id.
         ctes.append(
             "sub AS (\n"
-            "  SELECT category_id, category_uuid FROM vw_chat_categories WHERE slug = %s\n"
+            "  SELECT category_id, category_uuid, 1 AS is_root FROM vw_chat_categories WHERE slug = %s\n"
             "  UNION ALL\n"
-            "  SELECT c.category_id, c.category_uuid FROM vw_chat_categories c\n"
+            "  SELECT c.category_id, c.category_uuid, 0 FROM vw_chat_categories c\n"
             "  JOIN sub ON c.parent_id = sub.category_id\n"
             ")"
         )
@@ -148,10 +151,23 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
             "  JOIN sub ON sub.category_uuid = pc.category_uuid\n"
             ")"
         )
-        # A row matches if it, or its parent, is in the category (variants may not be linked directly).
+        # The chosen category's own title, only when it is a size word ("Queen"): a size category then matches only that size's
+        # variants. A broad category (Mattresses and Bedding) or one with other kinds of children applies no size filter.
+        ctes.append(
+            "cat_titles AS (\n"
+            "  SELECT DISTINCT c.title FROM vw_chat_categories c JOIN sub ON sub.category_uuid = c.category_uuid AND sub.is_root = 1\n"
+            f"  WHERE c.title IN ({_SIZE_TITLES_SQL})\n"
+            ")"
+        )
+        # A row matches if it is in the category, or its parent is (variants may not be linked directly). The parent's
+        # category lists every size it comes in, so a variant that records a different size (Twin in a Queen category)
+        # is left out; variants with no size on file keep matching through the parent as before.
         where.append(
             "(p.product_uuid IN (SELECT product_uuid FROM cat_products) "
-            "OR p.parent_uuid IN (SELECT product_uuid FROM cat_products))"
+            "OR (p.parent_uuid IN (SELECT product_uuid FROM cat_products) "
+            "AND NOT EXISTS (SELECT 1 FROM vw_chat_product_attributes sz "
+            f"WHERE sz.product_uuid = p.product_uuid AND sz.group_name = '{SIZE_GROUP}' "
+            "AND EXISTS (SELECT 1 FROM cat_titles) AND sz.value NOT IN (SELECT title FROM cat_titles))))"
         )
 
     if v["keyword"]:

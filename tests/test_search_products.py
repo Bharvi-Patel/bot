@@ -127,3 +127,63 @@ def test_search_results_get_full_image_urls(monkeypatch):
     monkeypatch.setenv("SJ_IMAGE_BASE_URL", "https://shop.example/media")
     out = search_products({}, run_query=lambda *_: [{"sku": "A", "main_image": "a.webp"}])
     assert out["products"][0]["main_image"] == "https://shop.example/media/a.webp"
+
+
+# ---- size categories: the category sits on the parent family, each variant records its own "Bed Size" ----
+import sqlite3 as _sqlite3
+
+
+def _size_db():
+    db = _sqlite3.connect(":memory:")
+    db.row_factory = _sqlite3.Row
+    db.executescript("""
+    CREATE TABLE vw_chat_product_search(product_uuid,parent_uuid,sku,slug,name,price,brand_name,brand_slug,width,height,depth,main_image);
+    CREATE TABLE vw_chat_categories(category_id,category_uuid,parent_id,slug,title);
+    CREATE TABLE vw_chat_product_categories(product_uuid,category_uuid);
+    CREATE TABLE vw_chat_product_attributes(product_uuid,group_name,value);
+    INSERT INTO vw_chat_categories VALUES (1,'c-mat',NULL,'mattresses-and-bedding','Mattresses and Bedding'),
+      (2,'c-size',1,'mattresses-by-size','Mattresses by Size'),(3,'c-queen',2,'mattresses-by-size-queen','Queen'),
+      (4,'c-twin',2,'mattresses-by-size-twin','Twin');
+    """)
+
+    def prod(u, par, sku, name, price):
+        db.execute("INSERT INTO vw_chat_product_search VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (u, par, sku, sku.lower(), name, price, "B", "b", None, None, None, None))
+    for u, sku, n, pr, sz in [("t", "M1", "Chime Twin Mattress", 154.95, "Twin"), ("f", "M2", "Chime Full Mattress", 193.17, "Full"),
+                              ("q", "M3", "Chime Queen Mattress", 220.54, "Queen"), ("k", "M4", "Chime King Mattress", 280.45, "King")]:
+        prod(u, "chime", sku, n, pr)
+        db.execute("INSERT INTO vw_chat_product_attributes VALUES (?,?,?)", (u, "Bed Size", sz))
+    for c in ("c-queen", "c-twin"):
+        db.execute("INSERT INTO vw_chat_product_categories VALUES ('chime',?)", (c,))      # the parent family, not a row itself
+    prod("art", None, "DM510-Q", "Artemisia", 239.80)                                      # standalone, linked straight to Queen
+    db.execute("INSERT INTO vw_chat_product_categories VALUES ('art','c-queen')")
+    prod("ns", "nosize", "NS-A", "No Size Mattress", 310)                                  # variant with no size on file
+    db.execute("INSERT INTO vw_chat_product_categories VALUES ('nosize','c-queen')")
+    return db
+
+
+def _names(db, args):
+    sql, params = build_search_query({"sort": "price_asc", **args})
+    return [(r["name"], r["price"]) for r in db.execute(sql.replace("%s", "?").replace("%%", "%"), params)]
+
+
+@pytest.mark.skipif(_sqlite3.sqlite_version_info < (3, 44), reason="needs CONCAT_WS")
+def test_size_category_returns_only_that_sizes_variant_price():
+    db = _size_db()
+    assert _names(db, {"category_slug": "mattresses-by-size-queen"})[0] == ("Chime Queen Mattress", 220.54)    # not the $154.95 Twin
+    assert _names(db, {"category_slug": "mattresses-by-size-twin"}) == [("Chime Twin Mattress", 154.95)]
+    assert _names(db, {"category_slug": "mattresses-by-size-queen", "max_price": 230}) == [("Chime Queen Mattress", 220.54)]
+
+
+@pytest.mark.skipif(_sqlite3.sqlite_version_info < (3, 44), reason="needs CONCAT_WS")
+def test_size_filter_keeps_standalone_products_and_variants_without_a_size():
+    names = [n for n, _ in _names(_size_db(), {"category_slug": "mattresses-by-size-queen"})]
+    assert "Artemisia" in names and "No Size Mattress" in names
+
+
+@pytest.mark.skipif(_sqlite3.sqlite_version_info < (3, 44), reason="needs CONCAT_WS")
+def test_broad_category_applies_no_size_filter():
+    db = _size_db()
+    sql, params = build_search_query({"category_slug": "mattresses-and-bedding"})
+    row = [r for r in db.execute(sql.replace("%s", "?").replace("%%", "%"), params) if r["name"].startswith("Chime")][0]
+    assert row["matching_options"] == 4            # Twin, Full, Queen and King all still match

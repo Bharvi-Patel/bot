@@ -139,3 +139,34 @@ def test_order_lookup_with_a_bad_context_never_reaches_the_database(monkeypatch)
     out = router.answer("order 1001, jo@example.com", llm)                      # no ctx at all
     assert out["blocked"] is None
     assert [m for m in llm.seen[1] if m["role"] == "tool"][0]["result"]["error"] == "verification_unavailable"
+
+
+def _policy_hit(sim=0.9):
+    return {"found": True, "cutoff": 0.3, "chunks": [{"similarity": sim, "text": "Financing is offered through Acme Credit."}]}
+
+
+def test_bare_contact_reply_after_solid_policy_match_is_retried(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "email": "info@store.com"})
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: _policy_hit())
+    llm = FakeLLM(call("get_store_info"), call("search_policies", query="financing"),
+                  say("You can reach us at 555-0100 or info@store.com for more details."),
+                  say("Financing is offered through Acme Credit. Call 555-0100 for details."))
+    out = router.answer("do you offer financing?", llm)
+    assert "Acme Credit" in out["reply"]
+    assert llm.seen[-1][-1]["text"] == g.POLICY_NUDGE
+
+
+def test_bare_contact_retry_happens_only_once(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "email": "info@store.com"})
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: _policy_hit())
+    bare = "You can reach us at 555-0100 or info@store.com for more details."
+    llm = FakeLLM(call("get_store_info"), call("search_policies", query="financing"), say(bare), say(bare))
+    out = router.answer("do you offer financing?", llm)
+    assert "555-0100" in out["reply"] and not llm.turns
+
+
+def test_contact_questions_and_weak_matches_are_not_retried():
+    bare = "Call us on 731-423-6565."
+    assert not g.is_bare_contact_reply(bare, [_policy_hit()], "what is your phone number?", ["search_policies"])
+    assert not g.is_bare_contact_reply(bare, [_policy_hit(0.2)], "do you offer financing?", ["search_policies"])
+    assert g.is_bare_contact_reply(bare, [_policy_hit()], "do you offer financing?", ["search_policies"])
