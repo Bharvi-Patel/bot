@@ -56,6 +56,7 @@ NOTE_WEAK = (
     "(for example financing or warranty text for a question about coupons or cleaning), begin your reply by saying you "
     "don't have that information, then point the customer to the store phone or email (get_store_info). "
     "Never say the store does or does not offer something unless these pages say so. "
+    "If they DO answer the question, just answer from them and do not say you lack the information. "
 )
 
 NOTE_NOT_FOUND = (

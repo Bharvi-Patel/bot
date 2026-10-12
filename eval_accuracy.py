@@ -385,10 +385,12 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     ap.add_argument("--skip-preflight", action="store_true", help="run even if the knowledge search is broken")
     ap.add_argument("--check-truth", action="store_true", help="run the ground-truth queries only; no model needed")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--cases", default="eval_cases", help="module that defines CASES (default eval_cases; try eval_fresh for the unseen question set)")
     args = ap.parse_args(argv)
 
     if cases is None:
-        from eval_cases import CASES as cases
+        import importlib
+        cases = importlib.import_module(args.cases).CASES
     cases = select(list(cases), args.only, args.limit)
     if args.list:
         for c in cases:
