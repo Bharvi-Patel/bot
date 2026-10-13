@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, is_extraction_attempt, is_order_change_request,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     reason: str | None = None
     nudged = False
     policy_nudged = False
+    tool_nudged = False
 
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
@@ -86,6 +87,12 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                 nudged = True
                 messages.append({"role": "assistant", "text": turn.text})
                 messages.append({"role": "user", "text": CHEAPEST_NUDGE})
+                continue
+            if not tool_nudged and (must_call := required_tool_nudge(question, tools_used)):   # categories / brands / policies from memory
+                tool_nudged = True
+                log_for_review(question, "required_tool_retried", tools_used)
+                messages.append({"role": "assistant", "text": turn.text})
+                messages.append({"role": "user", "text": must_call})
                 continue
             if not policy_nudged and is_bare_contact_reply(turn.text, results, question, tools_used):   # found the answer, then only gave the phone number
                 policy_nudged = True

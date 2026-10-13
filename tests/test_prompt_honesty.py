@@ -185,3 +185,58 @@ def test_router_makes_the_model_search_again_before_answering_cheapest_from_memo
     out = router.answer("which one is the cheapest?", LLM(), history)
     assert out["tools_used"] == ["search_products"] and "Greenbriar" in out["reply"] and "798" not in out["reply"]
     assert "Search the catalog now" in seen[1][-1]["text"]
+
+def test_required_tool_nudge_covers_categories_brands_and_policy_topics_only():
+    assert "list_categories" in g.required_tool_nudge("what categories do you sell?", [])
+    assert "list_categories" in g.required_tool_nudge("what do you carry", [])
+    assert "list_brands" in g.required_tool_nudge("what brands do you carry?", [])
+    assert "search_policies" in g.required_tool_nudge("do you have a price match guarantee?", ["get_store_info"])
+    assert "search_policies" in g.required_tool_nudge("are there any coupon codes?", [])
+    assert g.required_tool_nudge("what categories do you sell?", ["list_categories"]) is None      # already used the tool
+    assert g.required_tool_nudge("do you have a price match guarantee?", ["search_policies"]) is None
+    for q in ["show me sofas under $500", "good morning", "where is my order 123", "what are your hours?",
+              "which sofa has the highest percent discount right now?"]:
+        assert g.required_tool_nudge(q, []) is None, q
+
+
+def _scripted_llm(turns, seen):
+    class LLM:
+        def generate(self, messages):
+            seen.append(list(messages))
+            return turns.pop(0)
+    return LLM()
+
+
+def test_router_sends_a_category_question_back_when_the_model_answers_from_memory(monkeypatch):
+    from sjbot import router
+    from sjbot.llm_base import LLMTurn, ToolCall
+    seen = []
+    llm = _scripted_llm([LLMTurn(text="We sell Bedroom, Storage, Bathroom and Entryway furniture."),          # invented categories
+                         LLMTurn(tool_calls=[ToolCall("list_categories", {})]),
+                         LLMTurn(text="We sell Bedroom and Living Room furniture.")], seen)
+    monkeypatch.setitem(g.TOOLS, "list_categories", lambda a: {"categories": [{"slug": "bedroom", "title": "Bedroom"}]})
+    out = router.answer("what categories do you sell?", llm)
+    assert out["tools_used"] == ["list_categories"] and "Storage" not in out["reply"]
+    assert "Call list_categories with no arguments now" in seen[1][-1]["text"]
+
+
+def test_router_makes_a_price_match_question_use_the_policy_search(monkeypatch):
+    from sjbot import router
+    from sjbot.llm_base import LLMTurn, ToolCall
+    seen = []
+    llm = _scripted_llm([LLMTurn(tool_calls=[ToolCall("get_store_info", {})]),
+                         LLMTurn(text="You can call (731) 423-6565 to ask about price matching."),           # contact only, no search
+                         LLMTurn(tool_calls=[ToolCall("search_policies", {"question": "price match"})]),
+                         LLMTurn(text="I don't have that information. Please call the store.")], seen)
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "(731) 423-6565", "email": "shop@example.com"})
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.55, "note": "nothing"})
+    out = router.answer("do you have a price match guarantee?", llm)
+    assert out["tools_used"] == ["get_store_info", "search_policies"] and out["reply"].startswith("I don't have that information")
+    assert "Call search_policies now" in seen[2][-1]["text"]
+
+
+def test_brands_note_says_to_name_every_brand():
+    from sjbot.tools.list_brands import list_brands
+    rows = [{"brand_slug": "a", "brand_name": "A", "active_products": 3}, {"brand_slug": "b", "brand_name": "B", "active_products": 0}]
+    out = list_brands({}, run_query=lambda *_: rows)
+    assert "Name every brand" in out["note"] and "do not shorten or summarize the list" in out["note"]

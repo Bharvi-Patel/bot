@@ -30,7 +30,8 @@ def list_brands(args: dict[str, Any], run_query: Callable | None = None) -> dict
         "count": len(brands),
         "brands": brands,
         "note": (
-            "Present brands with products_available above 0 as brands the store carries now. "
+            "Name every brand with products_available above 0, all of them; do not shorten or summarize the list. "
+            "Those are the brands the store carries now. "
             "A brand with 0 has no current products; do not list it as available."
         ),
     }

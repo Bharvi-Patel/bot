@@ -391,6 +391,7 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     if cases is None:
         import importlib
         cases = importlib.import_module(args.cases).CASES
+    all_case_ids = {c["id"] for c in cases}
     cases = select(list(cases), args.only, args.limit)
     if args.list:
         for c in cases:
@@ -434,7 +435,13 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     when = datetime.now().strftime("%Y-%m-%d %H:%M")
     RUNS_DIR.mkdir(exist_ok=True)
     path = Path(args.resume) if args.resume else RUNS_DIR / f"eval_{datetime.now():%Y%m%d_%H%M%S}.jsonl"
-    done = {k for k, r in load_records(path).items() if r["status"] != "infra"}
+    existing = load_records(path)
+    unknown = {k[0] for k in existing} - all_case_ids
+    if args.resume and unknown:
+        print(f"Stopping: {path} contains cases that are not in the case set you loaded ({args.cases}): {sorted(unknown)[:5]} ...\n"
+              f"It was made with a different case set. Add --cases <module> (for example --cases eval_fresh) so results are not mixed.")
+        return 2
+    done = {k for k, r in existing.items() if r["status"] != "infra"}
     questions = sum(len(c["turns"]) for c in runnable)
     print(f"Model: {getattr(llm, 'model', 'unknown')}  ({type(llm).__name__})")
     print(f"{len(runnable)} cases x {args.runs} runs = {len(runnable) * args.runs} conversations, about {questions * args.runs * 10000:,} tokens (measured: roughly 10,000 per question)."
@@ -457,10 +464,10 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
                 print(f"  run {run_idx} {c['id']:22} {rec['status'].upper():8} {'; '.join(rec['reasons'])[:90]}")
                 infra_streak = infra_streak + 1 if rec["status"] == "infra" else 0
                 if infra_streak >= 3:
-                    print(f"\nStopping: 3 provider errors in a row (rate limit?). Continue later with:\n  python eval_accuracy.py --resume {path}")
+                    print(f"\nStopping: 3 provider errors in a row (rate limit?). Continue later with:\n  python eval_accuracy.py --resume {path}" + (f" --cases {args.cases}" if args.cases != "eval_cases" else ""))
                     stop = True
                 elif args.max_tokens and (getattr(llm, "tokens", 0) or 0) - start_tokens >= args.max_tokens:
-                    print(f"\nStopping: reached the --max-tokens budget ({args.max_tokens:,}). Continue later with:\n  python eval_accuracy.py --resume {path}")
+                    print(f"\nStopping: reached the --max-tokens budget ({args.max_tokens:,}). Continue later with:\n  python eval_accuracy.py --resume {path}" + (f" --cases {args.cases}" if args.cases != "eval_cases" else ""))
                     stop = True
                 if stop:
                     break

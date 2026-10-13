@@ -68,7 +68,7 @@ def test_tracing_is_off_in_tests_and_everything_is_a_no_op():
 
 def test_router_behaves_the_same_with_tracing_off(monkeypatch):
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", "{}")
-    out = router.answer("what brands do you carry", FakeLLM(LLMTurn(text="We carry several brands.")))
+    out = router.answer("good morning", FakeLLM(LLMTurn(text="We carry several brands.")))
     assert out["blocked"] is None and out["reply"] == "We carry several brands."
 
 
@@ -112,7 +112,7 @@ def test_a_failing_trace_client_never_breaks_the_bot(monkeypatch):
     with tracing.span("x") as sp:
         sp.update(output=1)
     assert tracing.generate(FakeLLM(LLMTurn(text="ok")), [{"role": "user", "text": "hi"}]).text == "ok"
-    out = router.answer("what brands do you carry", FakeLLM(LLMTurn(text="We carry several brands.")))
+    out = router.answer("good morning", FakeLLM(LLMTurn(text="We carry several brands.")))
     assert out["blocked"] is None and out["reply"] == "We carry several brands."
 
 
@@ -133,12 +133,12 @@ def test_a_turn_produces_chat_turn_llm_tool_and_reply_check_spans(client, monkey
     monkeypatch.setitem(g.TOOLS, "list_brands", lambda a: {"brands": ["Acme"]})
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", "{}")
     llm = FakeLLM(LLMTurn(tool_calls=[ToolCall("list_brands", {})]), LLMTurn(text="We carry Acme."))
-    out = router.answer("what brands do you carry", llm)
+    out = router.answer("good morning", llm)
     assert out["blocked"] is None
     names = [s["start"]["name"] for s in client.spans]
     assert names == ["chat_turn", "llm", "tool:list_brands", "llm", "reply_check"]
     turn = client.spans[0]
-    assert turn["start"]["input"] == "what brands do you carry"
+    assert turn["start"]["input"] == "good morning"
     assert turn["updates"][0]["output"] == {"reply": "We carry Acme.", "tools_used": ["list_brands"], "blocked": None}
     assert client.spans[2]["updates"][0]["output"] == {"brands": ["Acme"]}
     assert client.spans[4]["updates"][0]["output"] == {"ok": True, "reason": None}
@@ -146,5 +146,5 @@ def test_a_turn_produces_chat_turn_llm_tool_and_reply_check_spans(client, monkey
 
 def test_the_llm_object_is_never_part_of_a_trace(client, monkeypatch):
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", "{}")
-    router.answer("what brands do you carry", FakeLLM(LLMTurn(text="We carry several brands.")))
+    router.answer("good morning", FakeLLM(LLMTurn(text="We carry several brands.")))
     assert "FakeLLM" not in str([s["start"] for s in client.spans])

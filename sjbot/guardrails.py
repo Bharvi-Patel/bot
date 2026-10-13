@@ -204,6 +204,26 @@ def is_bare_contact_reply(reply: str, results: list, question: str, tools_used: 
     return any(isinstance(r, dict) and "cutoff" in r for r in results) and not _policy_searches_all_weak(results)
 
 
+_CATEGORY_QUESTION = re.compile(r"\b(?:what|which)\s+(?:product\s+|furniture\s+)?(?:categories|types|kinds)\b|\bcategories\s+(?:do|does)\b|"
+                                r"\bwhat\s+do\s+you\s+(?:sell|carry)\b", re.I)
+_BRAND_QUESTION = re.compile(r"\b(?:what|which)\s+brands\b|\bbrands\s+do\s+you\b", re.I)
+_POLICY_TOPIC = re.compile(r"\b(?:price[\s-]*match\w*|coupons?|promo(?:tion|\s+codes?)?s?|discount\s+codes?|warranty|refund\s+policy|"
+                           r"financing|layaway|restocking)\b", re.I)
+
+
+def required_tool_nudge(question: str, tools_used: list) -> str | None:
+    """Questions whose answer must come from a tool, never from memory: categories, brands, store policies and offers.
+    Returns the instruction to send back to the model if it tried to answer without calling that tool, else None."""
+    used = set(tools_used)
+    if _CATEGORY_QUESTION.search(question) and "list_categories" not in used:
+        return "Call list_categories with no arguments now and list every top-level category name it returns. Do not answer from memory."
+    if _BRAND_QUESTION.search(question) and "list_brands" not in used:
+        return "Call list_brands now and name every brand it returns. Do not answer from memory."
+    if _POLICY_TOPIC.search(question) and "search_policies" not in used:
+        return "Call search_policies now and answer from what it returns. Do not answer from memory or reply with only the phone number."
+    return None
+
+
 _PRICE_SUPERLATIVE = re.compile(r"\b(?:cheapest|least\s+expensive|lowest[\s-]+priced?|lowest\s+price|most\s+expensive|highest[\s-]+priced?|"
                                 r"highest\s+price|priciest)\b", re.I)
 _NOT_ABOUT_PRODUCTS = re.compile(r"\b(?:shipping|ship|delivery|financ\w*|warranty|protection|fee|fees|payment|pay)\b", re.I)
