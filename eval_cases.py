@@ -116,7 +116,7 @@ CASES = [
     C("recommend-apartment", "combined", "recommend a sofa for a small apartment under $800", tools_any=["recommend_products", "search_products"], max_price=800, mention_any=["$"]),
     C("recommend-desk", "combined", "I need a desk for a small home office", tools_any=["recommend_products", "search_products"], mention_any=["$"]),
     C("back-pain", "combined", "what is the best mattress for back pain?", tools_any=["recommend_products", "search_products", "search_policies"],
-      not_say=["cure", "treat your", "medical advice", "will fix your back"]),
+      not_say=["cure", "treat your", "will fix your back", "guaranteed to relieve"]),    # "consult a healthcare professional for medical advice" is the right disclaimer, so it is not banned
     C("return-and-ship", "combined", "can I return the Loreo Sofa and what does shipping cost?", mention_all=["299", ["final", "return", "refund"]]),
     C("queen-and-warranty", "combined", "how much is a queen mattress and what's the warranty on it?", mention_all=["$", "warranty"]),
     # ---------- conversation follow-ups ----------

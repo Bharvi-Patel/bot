@@ -171,6 +171,20 @@ def _policy_searches_all_weak(results: list) -> bool:
     return True
 
 
+_MD_LINK = re.compile(r"\[[^\]]*\]\([^)]*\)|https?://\S+")
+
+
+def _is_bare_pointer(text: str) -> bool:
+    """True if a reply is only a pointer to the store: once links, emails and phone numbers are removed, little is left
+    (<= 20 words) and no figures. A short reply that states a fact (\"a restocking fee of 30% applies\") is an answer, not a pointer,
+    however few words it has; the old word-count cutoff alone could not tell the two apart."""
+    rest = _MD_LINK.sub(" ", text)
+    rest = re.sub(r"\[(?:phone|email)\]", " ", rest)
+    rest = _PHONE.sub(" ", _EMAIL.sub(" ", rest))
+    rest = re.sub(r"[\d()+\s.\u2010-\u2015-]{7,}", " ", rest)                # any other phone-like digit run, e.g. 555-0100
+    return len(re.findall(r"[A-Za-z']+", rest)) <= 20 and not re.search(r"\d", rest)
+
+
 def add_no_info_prefix(reply: str, results: list, question: str, tools_used: list) -> str:
     """A short reply that only points the customer to the store, after a policy search with no solid match, must first say
     we don't have the information; otherwise it reads as if the store will supply the answer ("contact us for cleaning advice").
@@ -178,7 +192,7 @@ def add_no_info_prefix(reply: str, results: list, question: str, tools_used: lis
     text = reply.replace("\u2019", "'")
     if not set(tools_used) <= {"search_policies", "get_store_info"} or "search_policies" not in tools_used:
         return reply
-    if _STORE_INFO_QUESTION.search(question) or _DECLINE.search(text) or len(text.split()) > 45:
+    if _STORE_INFO_QUESTION.search(question) or _DECLINE.search(text) or not _is_bare_pointer(text):
         return reply
     if not ("@" in text or _PHONE.search(text) or "[phone]" in text or "[email]" in text):
         return reply
@@ -197,7 +211,7 @@ def is_bare_contact_reply(reply: str, results: list, question: str, tools_used: 
     text = reply.replace("\u2019", "'")
     if "search_policies" not in tools_used or not set(tools_used) <= {"search_policies", "get_store_info"}:
         return False
-    if _STORE_INFO_QUESTION.search(question) or _DECLINE.search(text) or len(text.split()) > 45:
+    if _STORE_INFO_QUESTION.search(question) or _DECLINE.search(text) or not _is_bare_pointer(text):
         return False
     if not ("@" in text or _PHONE.search(text) or "[phone]" in text or "[email]" in text):
         return False
@@ -208,7 +222,28 @@ _CATEGORY_QUESTION = re.compile(r"\b(?:what|which)\s+(?:product\s+|furniture\s+)
                                 r"\bwhat\s+do\s+you\s+(?:sell|carry)\b", re.I)
 _BRAND_QUESTION = re.compile(r"\b(?:what|which)\s+brands\b|\bbrands\s+do\s+you\b", re.I)
 _POLICY_TOPIC = re.compile(r"\b(?:price[\s-]*match\w*|coupons?|promo(?:tion|\s+codes?)?s?|discount\s+codes?|warranty|refund\s+policy|"
-                           r"financing|layaway|restocking)\b", re.I)
+                           r"financing|layaway|restocking|(?:military|veterans?|students?|seniors?|teachers?|nurses?|first[\s-]responders?)\s+discounts?|discounts?\s+for\s+(?:military|veterans?|students?|seniors?|teachers?|nurses?|first[\s-]responders?))\b", re.I)
+
+
+_NO_INFO_STYLE = re.compile(r"don'?t have|do not have|no information|not sure|couldn'?t find|could not find|don'?t see|not available", re.I)
+POLICY_FIRST_NUDGE = ("Before you tell the customer you do not have this information, call search_policies with their question. "
+                      "If it returns a page that covers it, answer from that page in your own words. Only if it finds nothing "
+                      "relevant should you say you do not have the information.")
+
+
+def declined_without_policy_search(reply: str, question: str, tools_used: list) -> str | None:
+    """A question the keyword list in _POLICY_TOPIC does not know ("do you take affirm or klarna?", "do you sell gift cards?")
+    was answered \"I don't have that information, call the store\" without the store's own pages ever being searched. Class fix
+    for that: if the reply is a no-information answer or a bare phone/email pointer, and the only tool used was get_store_info
+    (or none), send the model back once to search_policies first. Product, shipping, inventory and order questions are untouched
+    (they used other tools), and so are refusals (\"I can't help with that\"), which are not no-information answers."""
+    text = reply.replace("\u2019", "'")
+    if "search_policies" in tools_used or not set(tools_used) <= {"get_store_info"}:
+        return None
+    if _STORE_INFO_QUESTION.search(question):
+        return None
+    pointer = _is_bare_pointer(text) and ("@" in text or _PHONE.search(text) or "[phone]" in text or "[email]" in text)
+    return POLICY_FIRST_NUDGE if (_NO_INFO_STYLE.search(text) or pointer) else None
 
 
 def required_tool_nudge(question: str, tools_used: list) -> str | None:
@@ -318,6 +353,94 @@ def _numbers(obj: Any, out: set) -> None:
         out.add(round(float(obj), 2))
     elif isinstance(obj, str) and re.fullmatch(r"\d[\d,]*(\.\d+)?", obj):
         out.add(_to_float(obj))
+
+
+def _priced_items(obj: Any, pairs: list, every: set) -> None:
+    """Collect the prices in tool results: every value under a key containing 'price', and (name, price) pairs when the
+    same record has a name or title, so a price in a reply can be tied to the product on its line."""
+    if isinstance(obj, dict):
+        name = next((obj[k] for k in ("name", "title") if isinstance(obj.get(k), str)), None)
+        for k, v in obj.items():
+            if "price" in str(k).lower() and not isinstance(v, bool):
+                if isinstance(v, (int, float)) or (isinstance(v, str) and re.fullmatch(r"\d[\d,]*(\.\d+)?", v)):
+                    val = round(float(v) if not isinstance(v, str) else _to_float(v), 2)
+                    every.add(val)
+                    if name:
+                        pairs.append((_norm_words(name), val))
+            _priced_items(v, pairs, every)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            _priced_items(v, pairs, every)
+
+
+def repair_rounded_prices(reply: str, tool_results: list, user_message: str = "", earlier_replies: str = "") -> str | None:
+    """The model often writes a whole-dollar price for a price with cents ($185 for 185.14, $197 for 196.82). That is the right
+    answer with a loose number, so swap it for the exact price instead of blocking the reply. A whole-dollar price is fixed only
+    when it is the floor or the rounding of exactly one real price, matched to the product named on its own line when there is
+    one (and then even when that whole number also happens to be another product's exact price). A price with cents that is wrong, or one that fits no real price or several, is not rounding: returns None and the
+    reply stays blocked. Also returns None when nothing needed fixing."""
+    allowed: set = set()
+    _numbers(tool_results, allowed)
+    allowed |= {_to_float(m) for m in _PRICE.findall(user_message)} | {_to_float(m) for m in _PRICE.findall(earlier_replies)}
+    pairs: list = []
+    every: set = set()
+    _priced_items(tool_results, pairs, every)
+    state = {"changed": False, "ok": True}
+
+    def fits(v: float, p: float) -> bool:
+        return p in (float(int(v)), float(int(v + 0.5)))
+
+    def fix(m: re.Match) -> str:
+        p = _to_float(m.group(1))
+        start = m.string.rfind("\n", 0, m.start()) + 1
+        end = m.string.find("\n", m.end())
+        line = _norm_words(m.string[start:len(m.string) if end == -1 else end])
+        on_line = {v for nm, v in pairs if nm and nm in line}    # real prices of the product(s) named on this line
+        if p in on_line:
+            return m.group(0)                                    # already this product's exact price
+        whole = p == int(p)
+        near = {v for v in on_line if fits(v, p)} if whole else set()
+        found = near if len(near) == 1 else None
+        if found is None:
+            if p in allowed:
+                return m.group(0)                                # equals some real price and no single product to pin it to: as the guard always allowed
+            if not whole or on_line:
+                state["ok"] = False                              # cents but not a real price, or this product's price does not fit: invented, not rounding
+                return m.group(0)
+            found = {v for v in every if fits(v, p)}             # no product named on the line: only when exactly one real price fits
+            if len(found) != 1:
+                state["ok"] = False
+                return m.group(0)
+        v = next(iter(found))
+        state["changed"] = True
+        return "$" + (f"{v:,.0f}" if v == int(v) else f"{v:,.2f}")
+
+    out = _PRICE.sub(fix, reply)
+    return out if state["ok"] and state["changed"] else None
+
+
+_MD_LINK_TARGET = re.compile(r"\s*\[[^\]]*\]\(\s*([A-Za-z_][\w]*)\s*\)")
+
+
+def strip_tool_name_links(reply: str) -> str | None:
+    """The model sometimes writes a markdown link whose target is a tool name ([Get store contact details](get_store_info)).
+    The answer around it is fine and the link goes nowhere, so cut the link out instead of blocking the whole reply. Only links
+    whose target is an internal tool or parameter name are cut; a tool name anywhere else in the text still blocks. Returns
+    None if there was no such link."""
+    leak = _leak_words()
+    found = []
+
+    def cut(m: re.Match) -> str:
+        if leak.fullmatch(m.group(1)):
+            found.append(m.group(1))
+            return ""
+        return m.group(0)
+
+    out = _MD_LINK_TARGET.sub(cut, reply)
+    if not found:
+        return None
+    out = re.sub(r"([.!?])\.(?=\s|$)", r"\1", out)                 # \"call us. [link].\" must not end up as \"call us..\"
+    return out.strip()
 
 
 def repair_contacts(reply: str, tool_results: list, trusted_text: str) -> str | None:

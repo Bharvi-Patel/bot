@@ -397,3 +397,14 @@ def test_main_does_not_start_or_spend_tokens_when_preflight_fails(tmp_runs, caps
     code = ev.main(["--runs", "1", "--skip-preflight"], llm=FakeLLM(), answer_fn=lambda q, l, h, ctx=None: out("Returns are final."),
                    run_query=fake_query, cases=[POLICY_CASE], preflight_fn=lambda cases: "boom")
     assert code in (0, 1) and any(tmp_runs.glob("*.jsonl"))
+
+def test_we_dont_carry_it_counts_as_a_decline():
+    for reply in ("We don\u2019t carry the IKEA Kallax shelf.", "We currently do not carry that brand.", "Sorry, we don't sell gift cards."):
+        assert ev.REFUSAL.search(reply), reply
+
+
+def test_one_name_with_two_prices_passes_if_the_reply_has_either_price():
+    case = {**CASE, "truth": {**TRUTH, "min_hits": 1}, "max_price": None}
+    rows = [{"name": "Breckington Coffee Table", "price": 184.70}, {"name": "Breckington Coffee Table", "price": 135.71}]
+    assert ev.score_run(case, [out("Breckington Coffee Table \u2013 $135.71")], rows)["status"] == "pass"
+    assert ev.score_run(case, [out("Breckington Coffee Table \u2013 $99.00")], rows)["status"] == "fail"

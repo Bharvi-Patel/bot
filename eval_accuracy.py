@@ -35,6 +35,7 @@ NONE_FOUND = re.compile(
     r"\bno (?:\w+ ){0,2}(?:products|results|sofas|beds|desks|rugs|items|matches|options)|none (?:found|available)|"
     r"\bno .{0,40}(?:found|available|match)", re.I)
 REFUSAL = re.compile(r"can.?t|cannot|unable|not able|sorry|don.?t have|do not have|no information|not sure|not available|contact the store|please call|"
+                     r"(?:don.?t|do not|doesn.?t|does not|won.?t) (?:currently )?(?:carry|sell|stock|offer)|"
                      r"couldn.?t find|could not find|didn.?t find|did not find|trouble finding", re.I)
 MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)")
 FALLBACK_TEXT = "can't answer that reliably"
@@ -154,6 +155,9 @@ def score_run(case: dict, outs: list[dict], rows: list[dict] | None, tool_errors
                 every_name = {f for r in rows for f in forms(r[col])}
                 for r in mentioned:
                     if not price_near(text, forms(r[col]), float(r[pcol]), every_name):
+                        # one name can have several rows (parent + variants) at different prices: any of them is a right answer
+                        if any(price_near(text, forms(x[col]), float(x[pcol]), every_name) for x in rows if x[col] == r[col]):
+                            continue
                         reasons.append(f"price for {r[col]} is missing or wrong (database: ${float(r[pcol]):.2f})")
 
     if case.get("mention_any") and not any(norm(w) in text for w in case["mention_any"]):
@@ -180,6 +184,9 @@ def score_run(case: dict, outs: list[dict], rows: list[dict] | None, tool_errors
 
 
 # ---------------------------------------------------------------- running
+TOOL_CALLS: list[dict] = []
+
+
 @contextlib.contextmanager
 def watch_tool_errors():
     """Collect the names of tools that crashed (the dispatcher turns a crash into {"error": "tool_failed"}) while the block runs."""
@@ -188,6 +195,7 @@ def watch_tool_errors():
     real = router.run_tool
 
     def spy(name, args, ctx=None):
+        TOOL_CALLS.append({"tool": name, "args": args})                 # kept in the .jsonl so a failure shows what the model asked for
         result = real(name, args, ctx)
         if isinstance(result, dict) and result.get("error") in ("tool_failed", "unknown_tool"):
             failed.append(name)
@@ -210,6 +218,7 @@ def run_case(case: dict, run_idx: int, answer_fn: Callable, llm: Any, subs: dict
     outs: list[dict] = []
     t0, tok0 = time.monotonic(), getattr(llm, "tokens", 0) or 0
     failed: list[str] = []
+    TOOL_CALLS.clear()
     try:
         with watch_tool_errors() as failed:
             for q in questions:
@@ -226,9 +235,10 @@ def run_case(case: dict, run_idx: int, answer_fn: Callable, llm: Any, subs: dict
         "case": case["id"], "type": case["type"], "run": run_idx, **scored,
         "questions": [mask(q) for q in questions], "replies": [mask(o["reply"]) for o in outs],
         "tools": sorted({t for o in outs for t in o.get("tools_used", [])}),
-        "blocked": [o.get("blocked") for o in outs], "turns": len(questions),
+        "blocked": [o.get("blocked") for o in outs], "blocked_replies": [o.get("blocked_reply") for o in outs if o.get("blocked_reply")], "turns": len(questions),
         "seconds": round(time.monotonic() - t0, 2), "tokens": max(0, (getattr(llm, "tokens", 0) or 0) - tok0),
         "known_issue": case.get("known_issue"), "model": getattr(llm, "model", None), "tool_errors": sorted(set(failed)),
+        "tool_calls": [{"tool": c["tool"], "args": mask(json.dumps(c["args"], default=str))} for c in TOOL_CALLS],
     }
 
 

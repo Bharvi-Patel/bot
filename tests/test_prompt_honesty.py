@@ -240,3 +240,24 @@ def test_brands_note_says_to_name_every_brand():
     rows = [{"brand_slug": "a", "brand_name": "A", "active_products": 3}, {"brand_slug": "b", "brand_name": "B", "active_products": 0}]
     out = list_brands({}, run_query=lambda *_: rows)
     assert "Name every brand" in out["note"] and "do not shorten or summarize the list" in out["note"]
+
+# Real replies from eval run 2026-10-13 (fresh-restocking-fee, fresh-military)
+RESTOCK = ("According to our Terms and Conditions, if you return an item, a restocking fee of 30% of the total amount will apply. "
+           "You can find more details on our [Terms and Conditions page](https://southjacksonfurniture.com/terms-and-conditions).\n\n"
+           "For further clarification, you can contact us at:\n[phone]\n[email]")
+
+
+def test_a_short_answer_that_states_a_fact_is_not_called_a_non_answer():
+    tools = ["search_policies"]
+    q = "is there a restocking fee if i return something?"
+    assert g.add_no_info_prefix(RESTOCK, WEAK, q, tools) == RESTOCK            # was: "I don't have that information. According to..."
+    assert not g._is_bare_pointer(RESTOCK)
+    assert not g._is_bare_pointer("Returns are accepted within 30 days. Call (731) 423-1234.")   # short, but a fact
+    assert g._is_bare_pointer(CONTACT_ONLY) and g._is_bare_pointer("Call [phone] or email [email] for military discounts.")
+    assert g._is_bare_pointer("You can reach us at 555-0100 or info@store.com for more details.")   # 7-digit phone is not a fact
+
+
+def test_group_discount_questions_must_search_policies_but_product_discount_questions_do_not():
+    for q in ["do you have a military discount?", "any student discounts?", "is there a discount for seniors?"]:
+        assert "search_policies" in g.required_tool_nudge(q, ["get_store_info"]), q
+        assert g.required_tool_nudge(q, ["search_policies"]) is None

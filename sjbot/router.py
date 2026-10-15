@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, repair_rounded_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -74,6 +74,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     nudged = False
     policy_nudged = False
     tool_nudged = False
+    declined_nudged = False
 
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
@@ -93,6 +94,12 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                 log_for_review(question, "required_tool_retried", tools_used)
                 messages.append({"role": "assistant", "text": turn.text})
                 messages.append({"role": "user", "text": must_call})
+                continue
+            if not declined_nudged and (first := declined_without_policy_search(turn.text, question, tools_used)):   # \"don't have it\" without searching
+                declined_nudged = True
+                log_for_review(question, "declined_without_policy_search_retried", tools_used)
+                messages.append({"role": "assistant", "text": turn.text})
+                messages.append({"role": "user", "text": first})
                 continue
             if not policy_nudged and is_bare_contact_reply(turn.text, results, question, tools_used):   # found the answer, then only gave the phone number
                 policy_nudged = True
@@ -116,6 +123,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                     contact_results.append(result)
             messages.append({"role": "tool", "name": call.name, "result": result})
 
+    blocked_reply = None                                               # the reply the safety check threw away, kept for the eval log
     if reply is None and reason is None:
         reason = "no_final_answer"
     if reply is not None and not reply.strip():
@@ -126,9 +134,11 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
             sp.update(output={"ok": ok, "reason": why})
         for _ in range(2):                                             # right answer, bad contact line or link: fix it
-            if ok or why not in ("unknown_email", "unknown_phone", "unknown_link"):
+            if ok or why not in ("unknown_email", "unknown_phone", "unknown_link", "unverified_price", "internal_leak"):
                 break
             fixed = (strip_unknown_links(reply, results, question) if why == "unknown_link"
+                     else repair_rounded_prices(reply, results, user_said, earlier_replies) if why == "unverified_price"
+                     else strip_tool_name_links(reply) if why == "internal_leak"
                      else repair_contacts(reply, contact_results, trusted))
             if not fixed or fixed == reply:
                 break
@@ -137,13 +147,14 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             reply = fixed
             ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
         if not ok:
+            blocked_reply = reply
             reply, reason = None, why
         else:
             reply = add_no_info_prefix(reply, results, question, tools_used)
 
     if reply is None:
         log_for_review(question, reason or "unknown", tools_used)
-        return {"reply": FALLBACK, "tools_used": tools_used, "blocked": reason}
+        return {"reply": FALLBACK, "tools_used": tools_used, "blocked": reason, "blocked_reply": blocked_reply}
     if any(isinstance(r, dict) and (r.get("found") is False or r.get("error")) for r in results):
         log_for_review(question, "tool_found_nothing_or_error", tools_used)
     return {"reply": reply, "tools_used": tools_used, "blocked": None}

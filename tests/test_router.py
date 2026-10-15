@@ -46,6 +46,7 @@ def test_invented_price_is_blocked_and_logged(monkeypatch, tmp_path):
     out = router.answer("price of the Loreo sofa?", FakeLLM(call("get_product_details", sku="X"), say("It costs $799.")))
     assert out["reply"] == g.FALLBACK and out["blocked"] == "unverified_price"
     assert "unverified_price" in (tmp_path / "review.jsonl").read_text()
+    assert out["blocked_reply"] == "It costs $799."                     # the thrown-away reply is kept so the eval log can show it
 
 
 def test_unknown_tool_is_reported_to_the_model_not_run():
@@ -170,3 +171,4 @@ def test_contact_questions_and_weak_matches_are_not_retried():
     assert not g.is_bare_contact_reply(bare, [_policy_hit()], "what is your phone number?", ["search_policies"])
     assert not g.is_bare_contact_reply(bare, [_policy_hit(0.2)], "do you offer financing?", ["search_policies"])
     assert g.is_bare_contact_reply(bare, [_policy_hit()], "do you offer financing?", ["search_policies"])
+    
