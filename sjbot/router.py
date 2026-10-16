@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, repair_rounded_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, ground_brand_search, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,23 @@ def log_for_review(question: str, reason: str, tools_used: list[str]) -> None:
             f.write(json.dumps(row) + "\n")
     except OSError:
         log.exception("could not write review log")
+
+
+_BRANDS: list | None = None
+
+
+def known_brands() -> list:
+    """Brands the store carries, read once per process from the brand view. A failed lookup returns [] (and is retried next time);
+    it must never break a customer's search."""
+    global _BRANDS
+    if _BRANDS is None:
+        try:
+            from sjbot.db import run_query
+            rows = run_query("SELECT brand_slug, brand_name FROM vw_chat_brands WHERE active_products > 0")
+            _BRANDS = [{"slug": r["brand_slug"], "name": r["brand_name"]} for r in rows if r.get("brand_slug") and r.get("brand_name")]
+        except Exception:
+            return []
+    return _BRANDS
 
 
 def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
@@ -114,8 +131,13 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             if len(tools_used) >= max_calls:
                 result = dict(_LIMIT_RESULT)
             else:
-                with tracing.span(f"tool:{call.name}", input=call.args) as sp:
-                    result = run_tool(call.name, call.args, ctx)
+                args = call.args
+                if call.name == "search_products":
+                    args = ground_brand_search(call.args, question, known_brands())
+                    if args != call.args:
+                        log_for_review(question, "brand_search_grounded", tools_used)
+                with tracing.span(f"tool:{call.name}", input=args) as sp:
+                    result = run_tool(call.name, args, ctx)
                     sp.update(output=result)
                 tools_used.append(call.name)
                 results.append(result)
@@ -137,7 +159,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             if ok or why not in ("unknown_email", "unknown_phone", "unknown_link", "unverified_price", "internal_leak"):
                 break
             fixed = (strip_unknown_links(reply, results, question) if why == "unknown_link"
-                     else repair_rounded_prices(reply, results, user_said, earlier_replies) if why == "unverified_price"
+                     else repair_unverified_prices(reply, results, user_said, earlier_replies) if why == "unverified_price"
                      else strip_tool_name_links(reply) if why == "internal_leak"
                      else repair_contacts(reply, contact_results, trusted))
             if not fixed or fixed == reply:

@@ -8,6 +8,7 @@ are collapsed to ONE row per product family: the cheapest matching option, plus 
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from sjbot.config import full_image_url
@@ -274,11 +275,35 @@ def _unknown_category(slug: str, run_query: Callable) -> dict[str, Any] | None:
     }
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _brand_from_keyword(args: dict[str, Any], run_query: Callable) -> dict[str, Any]:
+    """The model often sends a brand as a text keyword ("acme", "coaster"). A keyword only matches words in product NAMES, so the
+    search finds nothing and the customer is told the store does not carry the brand (eval 2026-10-15: 23 Acme beds exist).
+    If the keyword is exactly a brand the store carries and no brand_slug was given, search by that brand instead."""
+    kw = args.get("keyword")
+    if not isinstance(kw, str) or args.get("brand_slug") or not _squash(kw) or len(kw.split()) > 4:
+        return args
+    want = _squash(kw)
+    try:
+        brands = run_query("SELECT brand_slug, brand_name FROM vw_chat_brands WHERE active_products > 0")
+    except Exception:                                        # a failed brand lookup must never break the search itself
+        return args
+    for b in brands if isinstance(brands, list) else []:
+        slug = b.get("brand_slug") if isinstance(b, dict) else None
+        if slug and want in {_squash(str(slug)), _squash(str(b.get("brand_name") or ""))}:
+            return {**{k: v for k, v in args.items() if k != "keyword"}, "brand_slug": slug}
+    return args
+
+
 def search_products(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
     """Tool entry point. Returns a JSON-friendly dict for the model."""
     if run_query is None:
         from sjbot.db import run_query as default_run_query
         run_query = default_run_query
+    args = _brand_from_keyword(args, run_query)
     try:
         sql, params = build_search_query(args)
         missing = build_missing_size_query(args)
@@ -308,6 +333,9 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
             return unknown                                   # a made-up slug looks like "no products"; say it is a bad slug instead
     if not rows:
         result["note"] = "No products matched. Suggest loosening a filter (price, size or color)."
+        if args.get("brand_slug") and args.get("category_slug"):
+            result["note"] += (" The category may simply be too narrow: before saying the store does not carry this brand, "
+                               "search again with only brand_slug (and the same price limit).")
         if args.get("keyword") and not args.get("category_slug"):
             result["note"] += (" Before saying we have none, look up the type with list_categories and search its category_slug "
                                "(with the same price limit); a keyword only matches words in product names.")

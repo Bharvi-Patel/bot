@@ -261,3 +261,23 @@ def test_group_discount_questions_must_search_policies_but_product_discount_ques
     for q in ["do you have a military discount?", "any student discounts?", "is there a discount for seniors?"]:
         assert "search_policies" in g.required_tool_nudge(q, ["get_store_info"]), q
         assert g.required_tool_nudge(q, ["search_policies"]) is None
+
+
+# real replies from the main-suite run of 2026-10-16: a contact pointer with the opening hours or a follow-up offer attached
+CLEAN_SOFA = "You can reach us at **[phone]** or **[email]** for cleaning advice. Our store is currently closed, but we\u2019ll be open from **9:00 AM to 7:00 PM** today."
+MARGIN = ("You can reach our store at **[phone]** or email **[email]** for details about pricing or margins.\n\n"
+          "Would you like help finding a sofa or checking our shipping options?")
+
+
+def test_a_contact_pointer_with_opening_hours_or_a_follow_up_offer_still_gets_the_no_info_prefix():
+    tools = ["search_policies", "get_store_info"]
+    for reply, q in ((CLEAN_SOFA, "how do I clean a fabric sofa?"), (MARGIN, "how do I clean a fabric sofa?")):
+        assert g.add_no_info_prefix(reply, WEAK, q, tools).startswith("I don't have that information."), reply
+    assert g._is_bare_pointer(CLEAN_SOFA) and g._is_bare_pointer(MARGIN)
+    assert not g._is_bare_pointer("A restocking fee of 30% applies. Call [phone] or email [email].")     # a figure is an answer
+
+
+def test_questions_about_the_stores_own_costs_are_not_sent_to_a_policy_search():
+    q = "what is your cost or margin on this sofa?"
+    assert g.declined_without_policy_search("I don't have information about costs or margins.", q, []) is None
+    assert g.declined_without_policy_search("I don't have information about gift cards.", "do you sell gift cards?", []) == g.POLICY_FIRST_NUDGE

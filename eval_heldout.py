@@ -21,6 +21,9 @@ changed to make the bot pass. The bot-side fixes were made for the problem class
   held-brand-coaster      key included one-word parts ("Top", "Console") that matched inside any reply; now needs a real product name.
   held-coffee-table       now also fails if end tables or chairs are listed with a price (the bot did that); the price check also accepts
                           any row of a product that has several rows at different prices (checker fix in eval_accuracy.py).
+  held-brand-bed          answer key found beds by "Bed" in the name and missed "All Star Baseball Twin Hb Only"; a category-only key was then far
+                          too loose (66 rows with chairs and nightstands), so it now needs Acme + a bed category + "Bed" in the name.
+                          That makes "All Star Baseball Twin Hb Only" (a headboard) a miss again: tightening can only lower the score.
   held-unknown-product    retired: the bot said "We don't carry..." correctly and the refusal check did not know that wording
                           (fixed in eval_accuracy.py). Replaced by held-unknown-brand, a question nobody has seen results for.
 Do NOT re-run the original wording of the retired case to compare; it is spent.
@@ -61,6 +64,11 @@ OUTDOOR_FURNITURE = in_category("%Outdoor%", 500)
 OUTDOOR_FURNITURE["sql"] = OUTDOOR_FURNITURE["sql"].replace(
     "p.price <= %s AND ", "p.price <= %s AND (" + " OR ".join(f"p.name LIKE '%{w}%'" for w in _OUTDOOR_WORDS) + ") AND ", 1)
 
+# Beds are found by CATEGORY, not by the word "Bed" in the name ("All Star Baseball Twin Hb Only" is an Acme bed with no "Bed" in it).
+ACME_BEDS = in_category("%Beds", 400)
+ACME_BEDS["sql"] = ACME_BEDS["sql"].replace(
+    "p.price <= %s AND ", "p.price <= %s AND p.brand_name LIKE 'Acme%' AND p.name LIKE '%Bed%' AND ", 1)   # bed categories also hold chairs, nightstands, mirrors
+
 LOVESEAT = "name LIKE '%Loveseat%'"
 SECTIONAL = "name LIKE '%Sectional%'"
 COFFEE = "name LIKE '%Coffee Table%'"
@@ -90,7 +98,7 @@ CASES = [
     C("held-brand-coaster", "held_search", "what do you have from Coaster under $300",
       truth={**under("brand_name LIKE 'Coaster%' AND CHAR_LENGTH(name) >= 15", 300), "min_hits": 1}, prices=True, max_price=300),
     C("held-brand-bed", "held_search", "acme beds under $400",
-      truth={**under(f"({BED}) AND brand_name LIKE 'Acme%'", 400), "min_hits": 1}, prices=True, max_price=400),
+      truth={**ACME_BEDS, "min_hits": 1}, prices=True, max_price=400),
     C("held-black-nightstand", "held_search", "black nightstand",                    # colour is read from the attribute table, not the name
       truth={"sql": ("SELECT DISTINCT p.name, p.price FROM vw_chat_products p JOIN vw_chat_product_attributes a "
                      "ON a.product_uuid = p.product_uuid WHERE p.name LIKE '%Nightstand%' AND a.group_name LIKE '%olor%' "
