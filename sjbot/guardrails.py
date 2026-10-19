@@ -402,7 +402,9 @@ def repair_rounded_prices(reply: str, tool_results: list, user_message: str = ""
         start = m.string.rfind("\n", 0, m.start()) + 1
         end = m.string.find("\n", m.end())
         line = _norm_words(m.string[start:len(m.string) if end == -1 else end])
-        on_line = {v for nm, v in pairs if nm and nm in line}    # real prices of the product(s) named on this line
+        named = {nm for nm, _ in pairs if nm and nm in line}
+        named = {nm for nm in named if not any(nm != o and nm in o for o in named)}   # 'Dresser' inside 'Willowton Bed, Dresser and Mirror' is not a second product on the line: keep the longest names only
+        on_line = {v for nm, v in pairs if nm in named}          # real prices of the product(s) named on this line
         if p in on_line:
             return m.group(0)                                    # already this product's exact price
         whole = p == int(p)

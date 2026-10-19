@@ -160,6 +160,21 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
             f"  WHERE c.title IN ({_SIZE_TITLES_SQL})\n"
             ")"
         )
+
+                # Families filed under any of the size categories next to the chosen one (Twin, Full, Queen ... under the same parent). A
+        # family is often filed under only ONE size while its variants come in several (eval 2026-10-19: the $143 "Queen Mattress"
+        # sits on a family filed as Twin), so the Queen category alone misses them.
+        ctes.append(
+            "size_sibs AS (\n"
+            "  SELECT DISTINCT pc.product_uuid FROM vw_chat_product_categories pc\n"
+            "  JOIN vw_chat_categories sc ON sc.category_uuid = pc.category_uuid\n"
+            f"  WHERE sc.title IN ({_SIZE_TITLES_SQL}) AND sc.parent_id IN (\n"
+            "    SELECT c.parent_id FROM vw_chat_categories c JOIN sub ON sub.category_uuid = c.category_uuid AND sub.is_root = 1\n"
+            f"    WHERE c.title IN ({_SIZE_TITLES_SQL}))\n"
+            ")"
+        )
+
+
         # A row matches if it is in the category, or its parent is (variants may not be linked directly). The parent's
         # category lists every size it comes in, so a variant that records a different size (Twin in a Queen category)
         # is left out; variants with no size on file keep matching through the parent as before.
@@ -168,7 +183,12 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
             "OR (p.parent_uuid IN (SELECT product_uuid FROM cat_products) "
             "AND NOT EXISTS (SELECT 1 FROM vw_chat_product_attributes sz "
             f"WHERE sz.product_uuid = p.product_uuid AND sz.group_name = '{SIZE_GROUP}' "
-            "AND EXISTS (SELECT 1 FROM cat_titles) AND sz.value NOT IN (SELECT title FROM cat_titles))))"
+            "AND EXISTS (SELECT 1 FROM cat_titles) AND sz.value NOT IN (SELECT title FROM cat_titles))) "
+            # a variant whose OWN recorded size is the chosen size counts even when its family is filed under another size
+            "OR (p.parent_uuid IN (SELECT product_uuid FROM size_sibs) "
+            "AND EXISTS (SELECT 1 FROM vw_chat_product_attributes sz2 "
+            f"WHERE sz2.product_uuid = p.product_uuid AND sz2.group_name = '{SIZE_GROUP}' "
+            "AND sz2.value IN (SELECT title FROM cat_titles))))"
         )
 
     if v["keyword"]:

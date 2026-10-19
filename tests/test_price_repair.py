@@ -61,3 +61,25 @@ def test_a_rounded_price_that_equals_another_products_exact_price_is_still_repai
 def test_a_price_that_does_not_fit_the_product_on_its_line_is_not_borrowed_from_another_product():
     res = [{"products": [{"name": "Ona Dresser", "price": 500.4}, {"name": "Pia Dresser", "price": 800.7}]}]
     assert g.repair_rounded_prices("- Ona Dresser: $801", res) is None                        # $801 fits Pia's price, not Ona's
+
+def test_a_short_product_name_inside_a_longer_one_does_not_borrow_the_short_products_price():
+    res = [{"products": [{"name": "Dresser", "price": 457.6}, {"name": "Willowton Queen Sleigh Bed, Dresser and Mirror", "price": 458.2}]}]
+    assert g.repair_rounded_prices("- Willowton Queen Sleigh Bed, Dresser and Mirror \u2013 $458", res) == \
+        "- Willowton Queen Sleigh Bed, Dresser and Mirror \u2013 $458.20"
+    assert g.repair_rounded_prices("- Dresser \u2013 $458", res) == "- Dresser \u2013 $457.60"
+
+
+def test_products_with_the_same_name_and_alike_rounded_prices_stay_blocked():
+    res = [{"products": [{"name": "Modmax 5-Piece Sectional", "price": 971.6}, {"name": "Modmax 5-Piece Sectional", "price": 972.4}]}]
+    assert g.repair_rounded_prices("- Modmax 5-Piece Sectional \u2013 $972", res) is None   # two real prices fit one name: do not guess
+
+def test_a_short_product_name_inside_a_longer_one_does_not_borrow_the_short_products_price():
+    res = [{"products": [{"name": "Dresser", "price": 457.6}, {"name": "Willowton Queen Sleigh Bed, Dresser and Mirror", "price": 458.2}]}]
+    assert g.repair_rounded_prices("- Willowton Queen Sleigh Bed, Dresser and Mirror \u2013 $458", res) == \
+        "- Willowton Queen Sleigh Bed, Dresser and Mirror \u2013 $458.20"
+    assert g.repair_rounded_prices("- Dresser \u2013 $458", res) == "- Dresser \u2013 $457.60"
+
+
+def test_products_with_the_same_name_and_alike_rounded_prices_stay_blocked():
+    res = [{"products": [{"name": "Modmax 5-Piece Sectional", "price": 971.6}, {"name": "Modmax 5-Piece Sectional", "price": 972.4}]}]
+    assert g.repair_rounded_prices("- Modmax 5-Piece Sectional \u2013 $972", res) is None   # two real prices fit one name: do not guess
