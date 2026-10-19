@@ -45,3 +45,14 @@ def test_the_nudge_is_sent_only_once(monkeypatch):
     llm = FakeLLM(say(AFFIRM), say(AFFIRM))                      # model refuses to search: second answer is accepted, no loop
     out = router.answer("do you take affirm or klarna?", llm)
     assert out["tools_used"] == [] and "don" in out["reply"]
+
+
+# gift-cards run 1 (2026-10-16): a contact pointer plus the opening hours slipped past the short-reply check
+GIFT_WITH_HOURS = ("You can reach South Jackson Furniture at **[phone]** or **[email]** for information on gift cards. "
+                   "Their store hours are:\n\n- Monday to Saturday: 9:00 AM \u2013 7:00 PM\n- Sunday: 11:00 AM \u2013 6:00 PM")
+
+
+def test_an_answer_built_only_from_the_store_card_is_sent_back_when_the_question_was_not_about_the_store():
+    assert g.declined_without_policy_search(GIFT_WITH_HOURS, "do you sell gift cards?", ["get_store_info"]) == g.POLICY_FIRST_NUDGE
+    assert g.declined_without_policy_search(GIFT_WITH_HOURS, "what are your hours?", ["get_store_info"]) is None
+    assert g.declined_without_policy_search("We open at 9.", "what time do you open on sunday", ["get_store_info"]) is None

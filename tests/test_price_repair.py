@@ -50,3 +50,14 @@ def test_router_repairs_a_rounded_price_instead_of_sending_the_fallback(monkeypa
     monkeypatch.setitem(g.TOOLS, "get_product_details", lambda a: {"name": "Loreo Sofa", "sale_price": 898.6})
     out = router.answer("price of the Loreo sofa?", FakeLLM(call("get_product_details", sku="X"), say("The Loreo Sofa is $899.")))
     assert out["blocked"] is None and out["reply"] == "The Loreo Sofa is $898.60."
+
+
+def test_a_rounded_price_that_equals_another_products_exact_price_is_still_repaired():
+    res = [{"products": [{"name": "Ona Dresser", "price": 1033.8}, {"name": "Pia Dresser", "price": 1034.0}]}]
+    assert g.repair_rounded_prices("- Ona Dresser: $1,034\n- Pia Dresser: $1,034", res) == "- Ona Dresser: $1,033.80\n- Pia Dresser: $1,034"
+    assert g.repair_rounded_prices("- Pia Dresser: $1,034", res) is None                      # already exact: nothing to fix
+
+
+def test_a_price_that_does_not_fit_the_product_on_its_line_is_not_borrowed_from_another_product():
+    res = [{"products": [{"name": "Ona Dresser", "price": 500.4}, {"name": "Pia Dresser", "price": 800.7}]}]
+    assert g.repair_rounded_prices("- Ona Dresser: $801", res) is None                        # $801 fits Pia's price, not Ona's

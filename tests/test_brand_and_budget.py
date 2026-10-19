@@ -143,3 +143,19 @@ def test_router_searches_the_brand_not_the_invented_category(monkeypatch):
     out = router.answer(COASTER_Q, FakeLLM(call("search_products", category_slug="sofas-and-seating-sofas", brand_slug="coaster", max_price=300),
                                           say("We have the Jacotte Bar Stool from Coaster for $176.")))
     assert seen == [{"brand_slug": "coaster", "max_price": 300}] and out["blocked"] is None
+
+
+def test_a_brand_only_question_tells_the_model_not_to_pick_a_product_type_for_the_customer(monkeypatch):
+    monkeypatch.setattr(router, "known_brands", lambda: KNOWN)
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})
+    llm = FakeLLM(call("search_products", category_slug="sofas-and-seating-sofas", brand_slug="coaster", max_price=300),
+                  say("We have the Jacotte Bar Stool from Coaster for $176."))
+    router.answer(COASTER_Q, llm)
+    shown = [m for m in llm.seen[-1] if m.get("role") == "tool"][-1]["result"]
+    assert shown["customer_request"] == g.BRAND_ONLY_NOTE
+    assert g.ground_brand_search_ex({"category_slug": "x"}, "acme beds under $400", KNOWN)[1] is False
+
+
+def test_the_prompt_no_longer_primes_sofas_and_has_a_brand_only_rule():
+    assert "(beds, sofas, desks)" not in g.SYSTEM_PROMPT
+    assert "names only a brand" in g.SYSTEM_PROMPT

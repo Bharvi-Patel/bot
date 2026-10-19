@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, ground_brand_search, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -131,13 +131,15 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             if len(tools_used) >= max_calls:
                 result = dict(_LIMIT_RESULT)
             else:
-                args = call.args
+                args, brand_only = call.args, False
                 if call.name == "search_products":
-                    args = ground_brand_search(call.args, question, known_brands())
+                    args, brand_only = ground_brand_search_ex(call.args, question, known_brands())
                     if args != call.args:
                         log_for_review(question, "brand_search_grounded", tools_used)
                 with tracing.span(f"tool:{call.name}", input=args) as sp:
                     result = run_tool(call.name, args, ctx)
+                    if brand_only and isinstance(result, dict):
+                        result = {**result, "customer_request": BRAND_ONLY_NOTE}
                     sp.update(output=result)
                 tools_used.append(call.name)
                 results.append(result)
