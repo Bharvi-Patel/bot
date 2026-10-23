@@ -63,7 +63,7 @@ def test_tool_call_limit(monkeypatch):
         n["runs"] += 1
         return {"phone": "1"}
     monkeypatch.setitem(g.TOOLS, "get_store_info", counting)
-    llm = FakeLLM(*[call("get_store_info") for _ in range(8)])
+    llm = FakeLLM(*[call("get_store_info", n=i) for i in range(8)])      # different arguments each time: identical repeats are not counted
     out = router.answer("loop forever", llm, max_calls=3)
     assert n["runs"] == 3 and out["reply"] == g.FALLBACK and out["blocked"] == "no_final_answer"
 
@@ -172,3 +172,111 @@ def test_contact_questions_and_weak_matches_are_not_retried():
     assert not g.is_bare_contact_reply(bare, [_policy_hit(0.2)], "do you offer financing?", ["search_policies"])
     assert g.is_bare_contact_reply(bare, [_policy_hit()], "do you offer financing?", ["search_policies"])
     
+
+def test_identical_repeat_calls_are_answered_without_spending_the_budget(monkeypatch):
+    n = {"runs": 0}
+    def counting(a):
+        n["runs"] += 1
+        return {"phone": "1"}
+    monkeypatch.setitem(g.TOOLS, "get_store_info", counting)
+    llm = FakeLLM(call("get_store_info"), call("get_store_info"), call("get_store_info"), say("Call us on 1."))
+    out = router.answer("hi", llm, max_calls=1)
+    assert n["runs"] == 1 and out["reply"] == "Call us on 1." and out["tools_used"] == ["get_store_info"]
+
+
+def test_model_that_is_still_calling_tools_is_asked_once_for_a_final_answer(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "1"})
+    turns = [call("get_store_info", n=i) for i in range(3)] + [say("Please call the store on 1.")]   # 3 turns fill max_calls=1 + 2
+    llm = FakeLLM(*turns)
+    out = router.answer("hi", llm, max_calls=1)
+    assert out["reply"] == "Please call the store on 1." and out["blocked"] is None
+    assert router.FINAL_ANSWER_NUDGE in [m["text"] for m in llm.seen[-1] if m["role"] == "user"]
+
+
+def test_final_answer_call_that_still_wants_tools_ends_in_the_fallback(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "1"})
+    out = router.answer("hi", FakeLLM(*[call("get_store_info", n=i) for i in range(4)]), max_calls=1)
+    assert out["reply"] == g.FALLBACK and out["blocked"] == "no_final_answer"
+
+
+def test_hours_question_answered_from_memory_is_sent_back_to_get_store_info(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "hours": "Mon-Sat 9 AM-6 PM"})
+    llm = FakeLLM(say("We are closed on Thanksgiving."), call("get_store_info"), say("I don't have holiday hours; call 555-0100."))
+    out = router.answer("are you open on thanksgiving?", llm)
+    assert out["tools_used"] == ["get_store_info"] and "closed on Thanksgiving" not in out["reply"]
+    assert g.HOURS_NUDGE in [m["text"] for m in llm.seen[1] if m["role"] == "user"]
+
+
+def test_hours_nudge_only_matches_hours_questions():
+    for q in ("are you open on thanksgiving?", "what time do you close on sundays?", "what are your store hours?",
+              "actually, what are your hours on saturday?", "are u guys open today"):
+        assert g.required_tool_nudge(q, []) == g.HOURS_NUDGE, q
+    for q in ("show me recliners under $600", "do you have open box deals", "closed back chairs under $200", "how much is shipping?"):
+        assert g.required_tool_nudge(q, []) != g.HOURS_NUDGE, q
+    assert g.required_tool_nudge("are you open today?", ["get_store_info"]) is None
+
+
+def test_misspelt_product_sent_to_the_policy_search_is_retried_in_the_catalog(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.65, "chunks": []})
+    monkeypatch.setitem(g.TOOLS, "list_categories", lambda a: {"categories": [{"slug": "recliners", "title": "Recliners"}]})
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"count": 1, "products": [{"sku": "R1", "name": "Rocker Recliner", "price": 299.0}]})
+    llm = FakeLLM(call("search_policies", question="cheep reclyners"), say("I don't have information about that."),
+                  call("search_products", keyword="recliner", sort="price_asc"), say("The cheapest is the Rocker Recliner at $299.00."))
+    out = router.answer("cheep reclyners pls", llm)
+    assert out["tools_used"] == ["search_policies", "search_products"] and "Rocker Recliner" in out["reply"]
+    assert g.PRODUCT_RETRY_NUDGE in [m["text"] for m in llm.seen[2] if m["role"] == "user"]
+
+
+STORE = {"found": True, "stores": [{"name": "SJF", "phone": "(731) 555-0100", "email": "info@store.example",
+                                    "hours_summary": "Monday to Saturday: 9:00 AM - 6:00 PM; Sunday: Closed"}]}
+
+
+def test_holiday_question_gets_a_reply_built_from_the_store_record(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: STORE)
+    llm = FakeLLM(call("get_store_info"), say("We are closed on Christmas Day."))
+    out = router.answer("are you guys open on christmas day?", llm)
+    assert "closed on Christmas" not in out["reply"] and "don't have holiday hours" in out["reply"]
+    assert "Monday to Saturday: 9:00 AM - 6:00 PM" in out["reply"] and "(731) 555-0100" in out["reply"]
+    assert out["blocked"] is None
+
+
+def test_holiday_reply_is_not_used_for_ordinary_hours_questions(monkeypatch):
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: STORE)
+    out = router.answer("what are your hours on saturday?", FakeLLM(call("get_store_info"), say("Saturday: 9:00 AM - 6:00 PM.")))
+    assert out["reply"] == "Saturday: 9:00 AM - 6:00 PM."
+
+
+def test_holiday_reply_helper_steps_aside_when_it_cannot_or_need_not_answer():
+    assert g.holiday_hours_reply("are you open on thanksgiving?", []) is None                        # tool has not run yet
+    assert g.holiday_hours_reply("show me sofas for the holidays", [STORE]) is None                   # not an hours question
+    with_holidays = {"found": True, "stores": [{**STORE["stores"][0], "hours_text": "Closed Christmas Day"}]}
+    assert g.holiday_hours_reply("are you open on christmas?", [with_holidays]) is None               # the record covers it
+
+
+def test_prompt_has_the_new_search_and_hours_rules():
+    assert "Call list_categories once per request" in g.SYSTEM_PROMPT and "and no category_slug" in g.SYSTEM_PROMPT
+    assert "always pass keyword" in g.SYSTEM_PROMPT and "Never say the store is open or closed on a holiday" in g.SYSTEM_PROMPT
+
+
+def test_cheapest_answer_from_a_search_without_a_type_word_is_retried_with_a_keyword(monkeypatch):
+    seen = []
+    def fake_search(a):
+        seen.append(dict(a))
+        name, price = ("Dresser Mirror Set", 150.0) if a.get("keyword") else ("Drawers (2Pcs), Black", 79.2)
+        return {"count": 1, "products": [{"sku": "X", "name": name, "price": price}], "sorted_by": "price_asc"}
+    monkeypatch.setitem(g.TOOLS, "search_products", fake_search)
+    llm = FakeLLM(call("search_products", category_slug="dressers", sort="price_asc"), say("The cheapest dresser is Drawers (2Pcs), Black at $79.20."),
+                  call("search_products", category_slug="dressers", sort="price_asc", keyword="dresser"), say("The cheapest dresser is the Dresser Mirror Set at $150.00."))
+    out = router.answer("cheapest dresser u have", llm)
+    assert out["reply"] == "The cheapest dresser is the Dresser Mirror Set at $150.00." and len(seen) == 2 and seen[1]["keyword"] == "dresser"
+    assert g.KEYWORD_NUDGE in [m["text"] for m in llm.seen[2] if m["role"] == "user"]
+
+
+def test_keyword_nudge_leaves_other_questions_alone():
+    no_kw = [{"category_slug": "beds", "sort": "price_asc"}]
+    assert g.superlative_search_lacks_keyword("cheapest queen bed", no_kw) == g.KEYWORD_NUDGE
+    assert g.superlative_search_lacks_keyword("cheapest queen bed", [{"keyword": "bed", "sort": "price_asc"}]) is None
+    assert g.superlative_search_lacks_keyword("show me beds under $500", no_kw) is None
+    assert g.superlative_search_lacks_keyword("cheapest shipping", no_kw) is None
+    assert g.superlative_search_lacks_keyword("cheapest Acme item", [{"brand_slug": "acme", "sort": "price_asc"}]) is None
+    assert g.superlative_search_lacks_keyword("cheapest bed", []) is None

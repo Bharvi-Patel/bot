@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
+from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -21,6 +21,8 @@ MAX_USER_CHARS = 1000
 MAX_HISTORY_MESSAGES = 10
 REVIEW_LOG = Path(__file__).resolve().parents[1] / "logs" / "review.jsonl"
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+FINAL_ANSWER_NUDGE = ("No more tool calls are allowed. Using only the tool results above, write your final answer to the customer now. "
+                      "If the results do not answer the question, say you could not find it and give the store's phone number.")
 _LIMIT_RESULT = {"error": "tool_call_limit",
                  "note": "No more tool calls are allowed for this message. Answer from what you already have, "
                          "or say you could not find it and give the store's phone or email."}
@@ -92,6 +94,10 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     policy_nudged = False
     tool_nudged = False
     declined_nudged = False
+    product_retry_nudged = False
+    keyword_nudged = False
+    search_calls: list[dict] = []                       # arguments of the product searches that really ran
+    seen_calls: dict[str, dict] = {}                    # identical repeat calls in one turn are answered from here and cost nothing
 
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
@@ -106,6 +112,12 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                 messages.append({"role": "assistant", "text": turn.text})
                 messages.append({"role": "user", "text": CHEAPEST_NUDGE})
                 continue
+            if not keyword_nudged and (kw := superlative_search_lacks_keyword(question, search_calls)):   # cheapest-first list with no type word
+                keyword_nudged = True
+                log_for_review(question, "superlative_keyword_retried", tools_used)
+                messages.append({"role": "assistant", "text": turn.text})
+                messages.append({"role": "user", "text": kw})
+                continue
             if not tool_nudged and (must_call := required_tool_nudge(question, tools_used)):   # categories / brands / policies from memory
                 tool_nudged = True
                 log_for_review(question, "required_tool_retried", tools_used)
@@ -118,6 +130,12 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                 messages.append({"role": "assistant", "text": turn.text})
                 messages.append({"role": "user", "text": first})
                 continue
+            if not product_retry_nudged and (retry := declined_without_product_search(turn.text, question, tools_used, results)):   # misspelt product word went to the policy search
+                product_retry_nudged = True
+                log_for_review(question, "declined_without_product_search_retried", tools_used)
+                messages.append({"role": "assistant", "text": turn.text})
+                messages.append({"role": "user", "text": retry})
+                continue
             if not policy_nudged and is_bare_contact_reply(turn.text, results, question, tools_used):   # found the answer, then only gave the phone number
                 policy_nudged = True
                 log_for_review(question, "bare_contact_reply_retried", tools_used)
@@ -128,7 +146,10 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             break
         messages.append({"role": "assistant", "text": turn.text, "tool_calls": turn.tool_calls, "raw": turn.raw})
         for call in turn.tool_calls:
-            if len(tools_used) >= max_calls:
+            call_key = json.dumps([call.name, call.args], sort_keys=True, default=str)
+            if call_key in seen_calls:                  # the model asked the same thing again: reuse the answer, do not spend a call
+                result = {**seen_calls[call_key], "repeat_note": "You already made this exact call; this is the same result. Use it or try something different."}
+            elif len(tools_used) >= max_calls:
                 result = dict(_LIMIT_RESULT)
             else:
                 args, brand_only = call.args, False
@@ -143,15 +164,29 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                     sp.update(output=result)
                 tools_used.append(call.name)
                 results.append(result)
+                seen_calls[call_key] = result
+                if call.name == "search_products":
+                    search_calls.append(args)
                 if call.name not in CONTACT_UNTRUSTED_TOOLS:
                     contact_results.append(result)
             messages.append({"role": "tool", "name": call.name, "result": result})
 
+    if reply is None and reason is None and tools_used:                # ran out of turns still calling tools: ask once for an answer, no tools
+        messages.append({"role": "user", "text": FINAL_ANSWER_NUDGE})
+        try:
+            last = tracing.generate(llm, messages)
+            if not last.tool_calls and (last.text or "").strip():
+                reply = last.text
+        except Exception:
+            log.exception("final answer call failed")
     blocked_reply = None                                               # the reply the safety check threw away, kept for the eval log
     if reply is None and reason is None:
         reason = "no_final_answer"
     if reply is not None and not reply.strip():
         reply, reason = None, "empty_reply"
+    if reply is not None and (holiday := holiday_hours_reply(question, results)):   # holidays are not in the store data: never let the model guess
+        log_for_review(question, "holiday_hours_replaced", tools_used)
+        reply = holiday
     if reply is not None:
         trusted = store_contact_text()
         with tracing.span("reply_check", input=reply) as sp:

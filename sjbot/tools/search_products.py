@@ -29,6 +29,13 @@ SIZE_GROUP = "Bed Size"          # variants carry their size here; the category 
 SIZE_TITLES = ("Twin", "Twin XL", "Full", "Full XL", "Queen", "King", "California King", "Cal King")
 _SIZE_TITLES_SQL = ", ".join(f"'{t}'" for t in SIZE_TITLES)     # fixed constants from this file, never user input
 
+# Parts are sold only as pieces of a bigger item ("Base, Box 2 of 2", "Back, Black", "Metal Post/Box 2 of 2") and were listed to
+# customers as if they were products (a "Queen Decking Board Set" as the cheapest bed). They stay out of results unless the
+# customer's search is explicitly for that category. Set HIDE_COMPONENT_SKUS = False to switch the filter off.
+HIDE_COMPONENT_SKUS = True
+COMPONENT_CATEGORY = "component-skus"
+COMPONENT_NAME_LIKE = "%%Box _ of _%%"          # "Box 2 of 2": _ is any one character, so boxes 1 to 9
+
 ALLOWED_KEYS = {
     "keyword", "category_slug", "brand_slug", "min_price", "max_price",
     "color", "material", "attribute_group", "attribute_value", "max_width_in", "sort",
@@ -198,6 +205,11 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
     if v["brand_slug"]:
         where.append("COALESCE(p.brand_slug, par.brand_slug) = %s")
         params.append(v["brand_slug"])
+    if HIDE_COMPONENT_SKUS and v["category_slug"] != COMPONENT_CATEGORY:
+        # constants from this file, pasted in (not user input); %% is a literal % because the query also has %s placeholders
+        where.append(f"p.name NOT LIKE '{COMPONENT_NAME_LIKE}'")
+        where.append("NOT EXISTS (SELECT 1 FROM vw_chat_product_categories cpc JOIN vw_chat_categories cc "
+                     f"ON cc.category_uuid = cpc.category_uuid WHERE cpc.product_uuid = p.product_uuid AND cc.slug = '{COMPONENT_CATEGORY}')")
     if v["min_price"] is not None:
         where.append("p.price >= %s")
         params.append(v["min_price"])
@@ -339,6 +351,10 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
         result["applied_filters"] = applied                  # the price limits actually used, so the reply may state them
     sort_used = args.get("sort") or "name"
     result["sorted_by"] = sort_used
+    if sort_used in ("price_asc", "price_desc") and not args.get("keyword") and rows:
+        result["type_check"] = ("Parts and accessories can be filed in a category (drawer sets, board sets). Before naming the first "
+                                "result as the cheapest or priciest of a type, check that its name says that type; if it does not, search "
+                                "again with keyword set to the type word.")
     if len(rows) == MAX_RESULTS:
         result["note"] = (f"Showing only the first {MAX_RESULTS} matches, sorted by {sort_used}; there are probably more, so do NOT "
                           f"say these are all of them; suggest narrowing the filters. ")
@@ -356,6 +372,10 @@ def search_products(args: dict[str, Any], run_query: Callable | None = None) -> 
         if args.get("brand_slug") and args.get("category_slug"):
             result["note"] += (" The category may simply be too narrow: before saying the store does not carry this brand, "
                                "search again with only brand_slug (and the same price limit).")
+        if args.get("category_slug") and not args.get("keyword"):
+            result["note"] += (" The category may hold only parts, or the items may be filed under another category: before saying we have "
+                               "none, search again with keyword set to the product word (for example stool or armoire), the same price "
+                               "limit, and no category_slug.")
         if args.get("keyword") and not args.get("category_slug"):
             result["note"] += (" Before saying we have none, look up the type with list_categories and search its category_slug "
                                "(with the same price limit); a keyword only matches words in product names.")

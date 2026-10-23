@@ -97,6 +97,9 @@ Rules:
 - If a category title joins several things (for example "Rugs and Decor", which also holds sculptures and accent tables), do not search it. Use its child category whose title is just the product type (for example "Rugs", slug rugs-and-decor-rugs), and never list sculptures, tables or other items as rugs. If list_categories shows has_subcategories true for a category that fits, search that category rather than a broader parent.
 - The product you name must be the type the customer asked for. A broad category (such as Mattresses and Bedding, which also holds bed bases and platform beds) can return other types, so also pass the customer's own word as keyword to search_products (for example keyword 'mattress'). If the first or cheapest result's name does not contain the type they asked for, search again with that word as keyword. Never present a different type (a platform bed for a mattress) as the answer; if there is none of that type, say so.
 - Only when the customer asks which product is the cheapest, lowest-priced, most expensive or highest-priced: call search_products with sort set to price_asc (cheapest first) or price_desc (most expensive first), plus the category_slug and any price limit, and answer with the first result. The default order is by name, so never pick the cheapest from a name-sorted list. For "show me", "any" or "under $X" questions, keep the default order and list up to 5 of the results, each with its name and price; do not answer with only the cheapest one.
+- Call list_categories once per request, with the customer's own word; do not try synonyms or other words. If it shows no category whose title is that product type, call search_products with keyword set to the customer's word (singular, spelled correctly, for example armoire), the price limit, and no category_slug. Only call an item that type if its name says so.
+- For cheapest or most expensive questions always pass keyword (the customer's own type word, singular and spelled correctly, for example bed or dresser) together with category_slug, so parts and accessories filed in the category (drawer sets, board sets) are not returned as the product. If the first result's name does not contain that word, search again.
+- Opening hours: get_store_info has the regular weekly hours only. Never say the store is open or closed on a holiday or special day; say you don't have holiday hours, give the regular hours and the phone.
 - When the customer refers to an item you listed earlier (\"the first one\", \"that sofa\", \"show me a picture of it\"), you no longer have its sku: call search_products with its name to get the sku, then call get_product_details with that sku, and give image links from the result as plain URLs.
 - Follow-up questions about products or prices (which is cheapest, compare them, anything under a different budget): call the search tool again and answer from its result, never from earlier messages.
 - Health or comfort questions about a product (for example the best mattress for back pain): still call recommend_products or search_products and list options with the facts the tools return; do not refuse to search and do not offer to search later.
@@ -253,6 +256,71 @@ def declined_without_policy_search(reply: str, question: str, tools_used: list) 
     return POLICY_FIRST_NUDGE if (_NO_INFO_STYLE.search(text) or pointer) else None
 
 
+# Opening hours and closures: the model used to answer "are you open on thanksgiving?" from nothing ("we are closed").
+_HOURS_QUESTION = re.compile(
+    r"\b(?:are\s+(?:you|u|ya)\s+(?:guys\s+)?(?:open|closed)|(?:what|when)\b[^?]{0,25}\b(?:open|close)s?\b|"
+    r"(?:store|showroom|business|opening|working)\s+hours?|hours?\s+(?:of\s+operation|on\s+\w+)|"
+    r"open\s+(?:on|today|tomorrow|tonight|late|sundays?)|closed?\s+(?:on|today|tomorrow))\b", re.I)
+HOURS_NUDGE = ("Call get_store_info now and answer about opening hours or closures only from what it returns. If it does not "
+               "list the day or holiday the customer asked about, say you do not have that information and give the store's "
+               "phone number. Never say the store is open or closed on a day the result does not state.")
+
+# A misspelt product word ("cheep reclyners") was sent to search_policies, found nothing, and the reply said "I don't have information".
+PRODUCT_RETRY_NUDGE = ("That may be a product request with a spelling mistake. Correct the spelling, then call search_products "
+                       "(or list_categories to find the category) before telling the customer we do not have it.")
+_PRODUCT_TOOLS = {"search_products", "recommend_products", "list_categories", "get_product_details"}
+
+
+def declined_without_product_search(reply: str, question: str, tools_used: list, results: list) -> str | None:
+    """Class fix for a no-information reply after ONLY a weak search_policies: send the model back once to try the catalog.
+    Does nothing for policy topics, store-info questions, internal-cost questions, or when any product tool already ran."""
+    if "search_policies" not in tools_used or not set(tools_used) <= {"search_policies", "get_store_info"}:
+        return None
+    if _PRODUCT_TOOLS & set(tools_used):
+        return None
+    if _POLICY_TOPIC.search(question) or _STORE_INFO_QUESTION.search(question) or _INTERNAL_QUESTION.search(question):
+        return None
+    if not _policy_searches_all_weak(results):
+        return None
+    text = reply.replace("\u2019", "'")
+    return PRODUCT_RETRY_NUDGE if (_NO_INFO_STYLE.search(text) or _DECLINE.search(text)) else None
+
+
+_HOLIDAY = re.compile(
+    r"\b(?:christmas(?:\s+(?:eve|day))?|xmas|thanksgiving|new\s+year(?:'?s)?(?:\s+(?:eve|day))?|easter|"
+    r"(?:4th|fourth)\s+of\s+july|july\s+(?:4|4th|fourth)|independence\s+day|memorial\s+day|labou?r\s+day|veterans?\s+day|"
+    r"columbus\s+day|mlk\s+day|presidents?'?\s+day|juneteenth|black\s+friday|holidays?)\b", re.I)
+_OPEN_WORD = re.compile(r"\b(?:open|opens|close|closes|closed|hours?|working|work)\b", re.I)
+
+
+def holiday_hours_reply(question: str, results: list) -> str | None:
+    """get_store_info holds the regular weekly hours only (its own note says \"Holidays are not in this data\"), yet the model kept
+    answering \"are you open on christmas?\" with \"we are closed\". When the customer asks about a holiday and the store record
+    never mentions one, the reply is built here from the record instead: say we have no holiday hours, give the regular hours and
+    the store's own phone and email. Returns None when the question is not about a holiday, get_store_info did not run (the nudge
+    sends the model to it first), or the record does mention holidays (then the model may answer from it)."""
+    if not (_HOLIDAY.search(question) and _OPEN_WORD.search(question)):
+        return None
+    stores = [st for r in results if isinstance(r, dict) for st in (r.get("stores") or []) if isinstance(st, dict)]
+    if not stores:
+        return None
+    if _HOLIDAY.search(json.dumps(stores, default=str)):
+        return None
+    store = stores[0]
+    summary = store.get("hours_summary") or store.get("hours_text")
+    parts = ["I don't have holiday hours on file."]
+    if summary:
+        parts.append(f"Our regular hours are {summary}.")
+    contact = []
+    if store.get("phone"):
+        contact.append(f"call {store['phone']}")
+    if store.get("email"):
+        contact.append(f"email {store['email']}")
+    if contact:
+        parts.append("To check holiday hours, please " + " or ".join(contact) + ".")
+    return " ".join(parts)
+
+
 def required_tool_nudge(question: str, tools_used: list) -> str | None:
     """Questions whose answer must come from a tool, never from memory: categories, brands, store policies and offers.
     Returns the instruction to send back to the model if it tried to answer without calling that tool, else None."""
@@ -263,6 +331,8 @@ def required_tool_nudge(question: str, tools_used: list) -> str | None:
         return "Call list_brands now and name every brand it returns. Do not answer from memory."
     if _POLICY_TOPIC.search(question) and "search_policies" not in used:
         return "Call search_policies now and answer from what it returns. Do not answer from memory or reply with only the phone number."
+    if _HOURS_QUESTION.search(question) and "get_store_info" not in used:
+        return HOURS_NUDGE
     return None
 
 
@@ -272,6 +342,21 @@ _NOT_ABOUT_PRODUCTS = re.compile(r"\b(?:shipping|ship|delivery|financ\w*|warrant
 PRODUCT_SEARCH_TOOLS = {"search_products", "recommend_products"}
 CHEAPEST_NUDGE = ("Search the catalog now: call search_products with sort price_asc (cheapest) or price_desc (most expensive), "
                   "the same category_slug and any price limit, then answer from that result only. Do not answer from earlier messages.")
+
+
+KEYWORD_NUDGE = ("This is a cheapest or most expensive question. Search again with the same category_slug, price limit and sort, and add "
+                 "keyword set to the product type word from the conversation (singular, spelled correctly, for example bed or dresser), so "
+                 "parts and accessories filed in the category are not returned as the product. Then answer from that result only.")
+
+
+def superlative_search_lacks_keyword(question: str, search_calls: list) -> str | None:
+    """Cheapest-first lists put cheap parts and accessories on top (a Queen Decking Board Set filed under Beds, a drawer set under
+    Dressers). A keyword with the type word keeps them out. The prompt asks for it; this sends the model back once when it did not."""
+    if not _PRICE_SUPERLATIVE.search(question) or _NOT_ABOUT_PRODUCTS.search(question) or not search_calls:
+        return None
+    if any(c.get("keyword") for c in search_calls) or all(c.get("brand_slug") for c in search_calls):
+        return None
+    return KEYWORD_NUDGE
 
 
 def needs_fresh_price_search(question: str, tools_used: list) -> bool:

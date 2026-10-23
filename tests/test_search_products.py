@@ -10,7 +10,7 @@ def test_no_filters_returns_capped_list_one_row_per_family():
     assert f"LIMIT {MAX_RESULTS}" in sql
     assert "ROW_NUMBER() OVER (PARTITION BY" in sql
     assert "WHERE rn = 1" in sql
-    assert "WHERE p." not in sql          # no filters, so no filter clause
+    assert "WHERE p.name NOT LIKE" in sql   # no customer filters: only the always-on parts filter
     assert params == []
 
 
@@ -187,3 +187,57 @@ def test_broad_category_applies_no_size_filter():
     sql, params = build_search_query({"category_slug": "mattresses-and-bedding"})
     row = [r for r in db.execute(sql.replace("%s", "?").replace("%%", "%"), params) if r["name"].startswith("Chime")][0]
     assert row["matching_options"] == 4            # Twin, Full, Queen and King all still match
+
+# ---- parts ("Box 2 of 2", the component-skus category) are not products a customer can buy on their own ----
+def _parts_db():
+    db = _sqlite3.connect(":memory:")
+    db.row_factory = _sqlite3.Row
+    db.executescript("""
+    CREATE TABLE vw_chat_product_search(product_uuid,parent_uuid,sku,slug,name,price,brand_name,brand_slug,width,height,depth,main_image);
+    CREATE TABLE vw_chat_categories(category_id,category_uuid,parent_id,slug,title);
+    CREATE TABLE vw_chat_product_categories(product_uuid,category_uuid);
+    CREATE TABLE vw_chat_product_attributes(product_uuid,group_name,value);
+    INSERT INTO vw_chat_categories VALUES (1,'c-stools',NULL,'bar-stools','Bar Stools'),(2,'c-parts',NULL,'component-skus','Component SKUs');
+    """)
+    rows = [("s1", "S-1", "Bolanburg Bar Stool", 45.03, "c-stools"),
+            ("s2", "S-2", "Base, Box 2 of 2", 63.80, "c-stools"),            # a part, named like one
+            ("s3", "S-3", "Back, Black", 77.00, "c-parts"),                  # a part, filed under component-skus
+            ("s4", "S-4", "Box Spring Set of 2", 99.00, "c-stools")]         # real product with "Box" and "of" in its name
+    for u, sku, name, price, cat in rows:
+        db.execute("INSERT INTO vw_chat_product_search VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (u, None, sku, sku.lower(), name, price, "B", "b", None, None, None, None))
+        db.execute("INSERT INTO vw_chat_product_categories VALUES (?,?)", (u, cat))
+    return db
+
+
+def _parts_names(db, args):
+    sql, params = build_search_query({"sort": "price_asc", **args})
+    return [r["name"] for r in db.execute(sql.replace("%s", "?").replace("%%", "%"), params)]
+
+
+def test_parts_are_hidden_from_a_general_search():
+    assert _parts_names(_parts_db(), {}) == ["Bolanburg Bar Stool", "Box Spring Set of 2"]
+
+
+def test_parts_are_hidden_from_a_category_search():
+    assert _parts_names(_parts_db(), {"category_slug": "bar-stools"}) == ["Bolanburg Bar Stool", "Box Spring Set of 2"]
+
+
+def test_a_search_for_the_parts_category_still_finds_them():
+    assert "Back, Black" in _parts_names(_parts_db(), {"category_slug": "component-skus"})
+
+
+def test_parts_filter_can_be_switched_off(monkeypatch):
+    from sjbot.tools import search_products as sp_mod
+    monkeypatch.setattr(sp_mod, "HIDE_COMPONENT_SKUS", False)
+    assert len(_parts_names(_parts_db(), {})) == 4
+
+
+def test_cheapest_list_without_a_keyword_carries_the_type_check_note():
+    rows = [{"sku": "A", "name": "Drawers (2Pcs), Black", "price": 79.2}]
+    out = search_products({"category_slug": "dressers", "sort": "price_asc"}, run_query=lambda *_: rows)
+    assert "type_check" in out
+    out = search_products({"category_slug": "dressers", "sort": "price_asc", "keyword": "dresser"}, run_query=lambda *_: rows)
+    assert "type_check" not in out
+    out = search_products({"category_slug": "dressers"}, run_query=lambda *_: rows)                    # default order: not a cheapest question
+    assert "type_check" not in out

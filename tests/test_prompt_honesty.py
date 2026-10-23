@@ -174,6 +174,8 @@ def test_router_makes_the_model_search_again_before_answering_cheapest_from_memo
     class LLM:
         turns = [LLMTurn(text="The cheapest is the 110 LATTE at $798."),                                   # wrong: from memory
                  LLMTurn(tool_calls=[ToolCall("search_products", {"sort": "price_asc"})]),
+                 LLMTurn(text="The cheapest is the Greenbriar Sofa at $215."),
+                 LLMTurn(tool_calls=[ToolCall("search_products", {"sort": "price_asc", "keyword": "sofa"})]),   # the keyword retry (no type word the first time)
                  LLMTurn(text="The cheapest is the Greenbriar Sofa at $215.")]
         def generate(self, messages):
             seen.append(list(messages))
@@ -183,7 +185,7 @@ def test_router_makes_the_model_search_again_before_answering_cheapest_from_memo
     history = [{"role": "user", "text": "show me sofas under $1000"},
                {"role": "assistant", "text": "110 LATTE - $798.00, 110 Black - $998.00"}]
     out = router.answer("which one is the cheapest?", LLM(), history)
-    assert out["tools_used"] == ["search_products"] and "Greenbriar" in out["reply"] and "798" not in out["reply"]
+    assert out["tools_used"] == ["search_products", "search_products"] and "Greenbriar" in out["reply"] and "798" not in out["reply"]
     assert "Search the catalog now" in seen[1][-1]["text"]
 
 def test_required_tool_nudge_covers_categories_brands_and_policy_topics_only():
