@@ -280,3 +280,13 @@ def test_keyword_nudge_leaves_other_questions_alone():
     assert g.superlative_search_lacks_keyword("cheapest shipping", no_kw) is None
     assert g.superlative_search_lacks_keyword("cheapest Acme item", [{"brand_slug": "acme", "sort": "price_asc"}]) is None
     assert g.superlative_search_lacks_keyword("cheapest bed", []) is None
+
+# retest-parts-bed (2026-10-23): the real cheapest queen bed has no category, so a keyword search limited to the beds category missed it
+def test_cheapest_search_limited_to_a_category_is_retried_without_the_category():
+    scoped = [{"category_slug": "bedroom-furniture-beds", "keyword": "queen", "sort": "price_asc"}]
+    unscoped = [*scoped, {"keyword": "queen bed", "sort": "price_asc"}]
+    assert g.superlative_search_lacks_keyword("what's the cheapest queen size bed?", scoped) == g.UNCATEGORIZED_NUDGE
+    assert g.superlative_search_lacks_keyword("what's the cheapest queen size bed?", unscoped) is None
+    assert g.superlative_search_lacks_keyword("show me queen beds", scoped) is None
+    assert "WITHOUT category_slug" in g.UNCATEGORIZED_NUDGE and "answer from your category result" in g.UNCATEGORIZED_NUDGE
+    assert "category_slug" in g.KEYWORD_NUDGE and "WITHOUT" not in g.KEYWORD_NUDGE       # the no-keyword nudge keeps the category

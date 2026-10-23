@@ -35,6 +35,14 @@ _SIZE_TITLES_SQL = ", ".join(f"'{t}'" for t in SIZE_TITLES)     # fixed constant
 HIDE_COMPONENT_SKUS = True
 COMPONENT_CATEGORY = "component-skus"
 COMPONENT_NAME_LIKE = "%%Box _ of _%%"          # "Box 2 of 2": _ is any one character, so boxes 1 to 9
+# More parts found by diagnose_retest.py (2026-10-23), filed as products but sold only as a piece of something else. Each is a
+# NOT LIKE pattern on the product name (%% is a literal % here). Add a line when a new part shows up as "the cheapest <item>".
+COMPONENT_NAME_LIKES = (
+    COMPONENT_NAME_LIKE,
+    "%%Decking Board%%",      # "Queen Decking Board Set" was offered as the cheapest queen bed
+    "%% Dresser Top%%",       # "Akerson Dresser Top Grey": the top piece of a mirrored dresser set, not a dresser
+    "%% Table Top",           # names that END in "Table Top" ("Bar Table Top"): a loose top, not a table
+)
 
 ALLOWED_KEYS = {
     "keyword", "category_slug", "brand_slug", "min_price", "max_price",
@@ -207,7 +215,8 @@ def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], 
         params.append(v["brand_slug"])
     if HIDE_COMPONENT_SKUS and v["category_slug"] != COMPONENT_CATEGORY:
         # constants from this file, pasted in (not user input); %% is a literal % because the query also has %s placeholders
-        where.append(f"p.name NOT LIKE '{COMPONENT_NAME_LIKE}'")
+        for pattern in COMPONENT_NAME_LIKES:
+            where.append(f"p.name NOT LIKE '{pattern}'")
         where.append("NOT EXISTS (SELECT 1 FROM vw_chat_product_categories cpc JOIN vw_chat_categories cc "
                      f"ON cc.category_uuid = cpc.category_uuid WHERE cpc.product_uuid = p.product_uuid AND cc.slug = '{COMPONENT_CATEGORY}')")
     if v["min_price"] is not None:

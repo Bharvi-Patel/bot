@@ -56,3 +56,12 @@ def test_an_answer_built_only_from_the_store_card_is_sent_back_when_the_question
     assert g.declined_without_policy_search(GIFT_WITH_HOURS, "do you sell gift cards?", ["get_store_info"]) == g.POLICY_FIRST_NUDGE
     assert g.declined_without_policy_search(GIFT_WITH_HOURS, "what are your hours?", ["get_store_info"]) is None
     assert g.declined_without_policy_search("We open at 9.", "what time do you open on sunday", ["get_store_info"]) is None
+
+# retest-weekend-close (2026-10-23): "what time do you shut on the weekend" was not recognised as a store-info question, so the
+# hours answer (which points to [phone]) was sent back to search_policies, and the model invented a returns question.
+def test_shut_and_closing_wording_counts_as_a_store_hours_question():
+    reply = "We close at 7:00 PM Monday to Saturday and 6:00 PM on Sunday. Call **[phone]** with any questions."
+    for q in ("what time do you shut on the weekend", "when do you shut tonight?", "what's your closing time", "when do u shut"):
+        assert g.declined_without_policy_search(reply, q, ["get_store_info"]) is None, q
+    assert g._HOURS_QUESTION.search("what time do you shut on the weekend")
+    assert g.declined_without_policy_search(GIFT_WITH_HOURS, "do you sell gift cards?", ["get_store_info"]) == g.POLICY_FIRST_NUDGE

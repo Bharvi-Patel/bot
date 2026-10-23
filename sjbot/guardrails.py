@@ -159,7 +159,7 @@ _STATUS_WORDS = re.compile(r"\b(?:where|status|track|tracking|when)\b", re.I)
 WEAK_POLICY_MATCH = 0.65          # keep in step with search_policies.WEAK_MATCH
 _DECLINE = re.compile(r"don'?t have|do not have|couldn'?t find|could not find|can'?t|cannot|unable|not sure|no information|"
                       r"not available|sorry|trouble finding|don'?t see", re.I)
-_STORE_INFO_QUESTION = re.compile(r"\b(?:phone|number|e-?mail|call|contact|hours?|open|opens|close|closes|closed|address|location|"
+_STORE_INFO_QUESTION = re.compile(r"\b(?:phone|number|e-?mail|call|contact|hours?|open|opens|close|closes|closed|shut|shuts|shutting|closing|address|location|"
                                   r"located|where are you|reach|directions|pick-?\s?up)\b", re.I)
 
 
@@ -258,7 +258,7 @@ def declined_without_policy_search(reply: str, question: str, tools_used: list) 
 
 # Opening hours and closures: the model used to answer "are you open on thanksgiving?" from nothing ("we are closed").
 _HOURS_QUESTION = re.compile(
-    r"\b(?:are\s+(?:you|u|ya)\s+(?:guys\s+)?(?:open|closed)|(?:what|when)\b[^?]{0,25}\b(?:open|close)s?\b|"
+    r"\b(?:are\s+(?:you|u|ya)\s+(?:guys\s+)?(?:open|closed)|(?:what|when)\b[^?]{0,25}\b(?:open|close|shut)s?\b|"
     r"(?:store|showroom|business|opening|working)\s+hours?|hours?\s+(?:of\s+operation|on\s+\w+)|"
     r"open\s+(?:on|today|tomorrow|tonight|late|sundays?)|closed?\s+(?:on|today|tomorrow))\b", re.I)
 HOURS_NUDGE = ("Call get_store_info now and answer about opening hours or closures only from what it returns. If it does not "
@@ -348,15 +348,27 @@ KEYWORD_NUDGE = ("This is a cheapest or most expensive question. Search again wi
                  "keyword set to the product type word from the conversation (singular, spelled correctly, for example bed or dresser), so "
                  "parts and accessories filed in the category are not returned as the product. Then answer from that result only.")
 
+# Some products are filed under no category, so a category search can never return them (the real cheapest queen bed). The model is
+# asked to ADD an unscoped search, not to replace the category one: with only the unscoped keyword search, a misspelt or different word
+# ("reclyners", "couch" for sofas) finds nothing and the reply says so, which a first version of this nudge caused.
+UNCATEGORIZED_NUDGE = ("Some products are not filed under any category, so your category search can miss the cheapest or most expensive one. "
+                       "Search once more with the same sort, price limit and keyword (the product type, singular, spelled correctly) but WITHOUT "
+                       "category_slug. Compare it with your category result and answer with the best real item of that type, skipping parts "
+                       "and accessories. If the search without a category finds nothing, answer from your category result.")
+
 
 def superlative_search_lacks_keyword(question: str, search_calls: list) -> str | None:
     """Cheapest-first lists put cheap parts and accessories on top (a Queen Decking Board Set filed under Beds, a drawer set under
     Dressers). A keyword with the type word keeps them out. The prompt asks for it; this sends the model back once when it did not."""
     if not _PRICE_SUPERLATIVE.search(question) or _NOT_ABOUT_PRODUCTS.search(question) or not search_calls:
         return None
-    if any(c.get("keyword") for c in search_calls) or all(c.get("brand_slug") for c in search_calls):
+    if all(c.get("brand_slug") for c in search_calls):
         return None
-    return KEYWORD_NUDGE
+    if not any(c.get("keyword") for c in search_calls):
+        return KEYWORD_NUDGE
+    if all(c.get("category_slug") for c in search_calls):     # keyword given, but every search was limited to one category
+        return UNCATEGORIZED_NUDGE                            # (retest-parts-bed: the real cheapest bed has no category)
+    return None
 
 
 def needs_fresh_price_search(question: str, tools_used: list) -> bool:

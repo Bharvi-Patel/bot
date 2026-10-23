@@ -241,3 +241,18 @@ def test_cheapest_list_without_a_keyword_carries_the_type_check_note():
     assert "type_check" not in out
     out = search_products({"category_slug": "dressers"}, run_query=lambda *_: rows)                    # default order: not a cheapest question
     assert "type_check" not in out
+
+# diagnose_retest.py (2026-10-23): loose tops and board sets filed as products were offered as "the cheapest dresser / bed / table"
+def test_loose_tops_and_board_sets_are_hidden_but_real_items_stay():
+    db = _parts_db()
+    extra = [("p1", "Queen Decking Board Set", 77.0), ("p2", "Akerson Dresser Top Grey", 66.0), ("p3", "Bar Table Top", 77.0),
+             ("p4", "Matteo Top Dresser", 88.0), ("p5", "Kimonte Dining Table", 77.28), ("p6", "Glass Top Coffee Table", 120.0)]
+    for u, name, price in extra:
+        db.execute("INSERT INTO vw_chat_product_search VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (u, None, u.upper(), u, name, price, "B", "b", None, None, None, None))
+        db.execute("INSERT INTO vw_chat_product_categories VALUES (?,?)", (u, "c-stools"))
+    names = _parts_names(db, {})
+    for hidden in ("Queen Decking Board Set", "Akerson Dresser Top Grey", "Bar Table Top"):
+        assert hidden not in names, hidden
+    for shown in ("Matteo Top Dresser", "Kimonte Dining Table", "Glass Top Coffee Table"):
+        assert shown in names, shown

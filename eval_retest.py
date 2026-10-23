@@ -19,7 +19,7 @@ from eval_cases import BED, C, under
 from eval_fresh import DINING_TABLE, RECLINER, cheapest
 
 PARTS = "name NOT LIKE '%Box _ of _%'"            # same idea as the filter in sjbot/tools/search_products.py
-DRESSER = "name LIKE '%Dresser%' AND name NOT LIKE '%Mirror%'"
+DRESSER = "name LIKE '%Dresser%' AND name NOT LIKE '%Mirror%' AND name NOT LIKE '%Dresser Top%'"   # "Akerson Dresser Top" is a part
 STOOL = f"name LIKE '%Stool%' AND {PARTS}"
 ARMOIRE = f"name LIKE '%Armoire%' AND {PARTS}"
 CONSOLE_TABLE = "name LIKE '%Console Table%'"
