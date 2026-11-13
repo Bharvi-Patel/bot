@@ -79,3 +79,19 @@ def test_get_llm_dispatch(monkeypatch):
     monkeypatch.setattr(OpenAICompatChat, "ensure_model", lambda self: None)
     llm = get_llm()
     assert type(llm).__name__ == "OpenAICompatChat" and llm.preset == "mistral"
+
+# 2026-11-13: ministral-8b key limited to 2 requests a minute; SJ_LLM_MIN_INTERVAL spaces the calls instead of failing with 429
+def test_min_interval_spaces_model_calls(monkeypatch):
+    import sjbot.llm_openai_compat as m
+    slept, now = [], [1000.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(m.time, "sleep", lambda s: (slept.append(round(s, 1)), now.__setitem__(0, now[0] + s)))
+    llm = OpenAICompatChat.__new__(OpenAICompatChat)
+    monkeypatch.delenv("SJ_LLM_MIN_INTERVAL", raising=False)
+    llm._throttle(); llm._throttle()
+    assert slept == []                                    # off by default
+    monkeypatch.setenv("SJ_LLM_MIN_INTERVAL", "31")
+    llm._throttle()                                       # first call after being off: nothing to wait for
+    now[0] += 10
+    llm._throttle()                                       # 10 s later: waits the other 21 s
+    assert slept == [21.0]

@@ -18,6 +18,7 @@ Mistral quirk handled here: its tool-call ids must be exactly 9 letters/digits, 
 from __future__ import annotations
 
 import hashlib
+import time
 import os
 
 from sjbot.llm_groq import GroqChat
@@ -84,7 +85,22 @@ class OpenAICompatChat(GroqChat):
                 m["tool_call_id"] = short(m["tool_call_id"])
         return out
 
+    def _throttle(self) -> None:
+        """SJ_LLM_MIN_INTERVAL=31 spaces model calls 31 s apart, for keys limited to 2 requests a minute (ministral-8b on a free
+        tier, 2026-11-13). The SDK's own retries back off for seconds, not minutes, so they cannot ride out a per-minute limit."""
+        try:
+            gap = float(os.environ.get("SJ_LLM_MIN_INTERVAL", "0") or 0)
+        except ValueError:
+            gap = 0.0
+        if gap <= 0:
+            return
+        wait = getattr(self, "_last_call", 0.0) + gap - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._last_call = time.monotonic()
+
     def _create(self, payload: list[dict]):
         # No reasoning_effort here: it is a Groq/OpenAI-specific field that other gateways may reject.
+        self._throttle()
         return self._client.chat.completions.create(model=self.model, messages=payload, tools=self._tools,
                                                     tool_choice="auto", temperature=self.temperature)
