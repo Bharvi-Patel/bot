@@ -36,13 +36,13 @@ def say(text):
 
 
 def test_tool_then_answer(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "email": "info@store.com"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
     out = router.answer("what's your number?", FakeLLM(call("get_store_info"), say("Call us on 555-0100.")))
     assert out == {"reply": "Call us on 555-0100.", "tools_used": ["get_store_info"], "blocked": None}
 
 
 def test_invented_price_is_blocked_and_logged(monkeypatch, tmp_path):
-    monkeypatch.setitem(g.TOOLS, "get_product_details", lambda a: {"sale_price": 899.0})
+    monkeypatch.setitem(g.TOOLS, "get_product_details", lambda a, ctx=None: {"sale_price": 899.0})
     out = router.answer("price of the Loreo sofa?", FakeLLM(call("get_product_details", sku="X"), say("It costs $799.")))
     assert out["reply"] == g.FALLBACK and out["blocked"] == "unverified_price"
     assert "unverified_price" in (tmp_path / "review.jsonl").read_text()
@@ -59,7 +59,7 @@ def test_unknown_tool_is_reported_to_the_model_not_run():
 
 def test_tool_call_limit(monkeypatch):
     n = {"runs": 0}
-    def counting(a):
+    def counting(a, ctx=None):
         n["runs"] += 1
         return {"phone": "1"}
     monkeypatch.setitem(g.TOOLS, "get_store_info", counting)
@@ -69,7 +69,7 @@ def test_tool_call_limit(monkeypatch):
 
 
 def test_model_can_recover_after_limit(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "1"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "1"})
     llm = FakeLLM(call("get_store_info"), call("get_store_info"), say("Please call the store."))
     out = router.answer("hi", llm, max_calls=1)
     assert out["reply"] == "Please call the store." and out["tools_used"] == ["get_store_info"]
@@ -147,7 +147,7 @@ def _policy_hit(sim=0.9):
 
 
 def test_bare_contact_reply_after_solid_policy_match_is_retried(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "email": "info@store.com"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
     monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: _policy_hit())
     llm = FakeLLM(call("get_store_info"), call("search_policies", query="financing"),
                   say("You can reach us at 555-0100 or info@store.com for more details."),
@@ -158,7 +158,7 @@ def test_bare_contact_reply_after_solid_policy_match_is_retried(monkeypatch):
 
 
 def test_bare_contact_retry_happens_only_once(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "email": "info@store.com"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
     monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: _policy_hit())
     bare = "You can reach us at 555-0100 or info@store.com for more details."
     llm = FakeLLM(call("get_store_info"), call("search_policies", query="financing"), say(bare), say(bare))
@@ -175,7 +175,7 @@ def test_contact_questions_and_weak_matches_are_not_retried():
 
 def test_identical_repeat_calls_are_answered_without_spending_the_budget(monkeypatch):
     n = {"runs": 0}
-    def counting(a):
+    def counting(a, ctx=None):
         n["runs"] += 1
         return {"phone": "1"}
     monkeypatch.setitem(g.TOOLS, "get_store_info", counting)
@@ -185,7 +185,7 @@ def test_identical_repeat_calls_are_answered_without_spending_the_budget(monkeyp
 
 
 def test_model_that_is_still_calling_tools_is_asked_once_for_a_final_answer(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "1"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "1"})
     turns = [call("get_store_info", n=i) for i in range(3)] + [say("Please call the store on 1.")]   # 3 turns fill max_calls=1 + 2
     llm = FakeLLM(*turns)
     out = router.answer("hi", llm, max_calls=1)
@@ -194,13 +194,13 @@ def test_model_that_is_still_calling_tools_is_asked_once_for_a_final_answer(monk
 
 
 def test_final_answer_call_that_still_wants_tools_ends_in_the_fallback(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "1"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "1"})
     out = router.answer("hi", FakeLLM(*[call("get_store_info", n=i) for i in range(4)]), max_calls=1)
     assert out["reply"] == g.FALLBACK and out["blocked"] == "no_final_answer"
 
 
 def test_hours_question_answered_from_memory_is_sent_back_to_get_store_info(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "555-0100", "hours": "Mon-Sat 9 AM-6 PM"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "hours": "Mon-Sat 9 AM-6 PM"})
     llm = FakeLLM(say("We are closed on Thanksgiving."), call("get_store_info"), say("I don't have holiday hours; call 555-0100."))
     out = router.answer("are you open on thanksgiving?", llm)
     assert out["tools_used"] == ["get_store_info"] and "closed on Thanksgiving" not in out["reply"]
@@ -218,7 +218,7 @@ def test_hours_nudge_only_matches_hours_questions():
 
 def test_misspelt_product_sent_to_the_policy_search_is_retried_in_the_catalog(monkeypatch):
     monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.65, "chunks": []})
-    monkeypatch.setitem(g.TOOLS, "list_categories", lambda a: {"categories": [{"slug": "recliners", "title": "Recliners"}]})
+    monkeypatch.setitem(g.TOOLS, "list_categories", lambda a, ctx=None: {"categories": [{"slug": "recliners", "title": "Recliners"}]})
     monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"count": 1, "products": [{"sku": "R1", "name": "Rocker Recliner", "price": 299.0}]})
     llm = FakeLLM(call("search_policies", question="cheep reclyners"), say("I don't have information about that."),
                   call("search_products", keyword="recliner", sort="price_asc"), say("The cheapest is the Rocker Recliner at $299.00."))
@@ -232,7 +232,7 @@ STORE = {"found": True, "stores": [{"name": "SJF", "phone": "(731) 555-0100", "e
 
 
 def test_holiday_question_gets_a_reply_built_from_the_store_record(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: STORE)
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: STORE)
     llm = FakeLLM(call("get_store_info"), say("We are closed on Christmas Day."))
     out = router.answer("are you guys open on christmas day?", llm)
     assert "closed on Christmas" not in out["reply"] and "don't have holiday hours" in out["reply"]
@@ -241,7 +241,7 @@ def test_holiday_question_gets_a_reply_built_from_the_store_record(monkeypatch):
 
 
 def test_holiday_reply_is_not_used_for_ordinary_hours_questions(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: STORE)
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: STORE)
     out = router.answer("what are your hours on saturday?", FakeLLM(call("get_store_info"), say("Saturday: 9:00 AM - 6:00 PM.")))
     assert out["reply"] == "Saturday: 9:00 AM - 6:00 PM."
 

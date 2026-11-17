@@ -227,7 +227,7 @@ def test_shipping_bad_input(bad):
 def test_failed_store_lookup_is_not_cached_as_contact_text(monkeypatch):
     import bot.guardrails as g
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", None)
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"error": "Store details are not available right now."})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"error": "Store details are not available right now."})
     assert g.store_contact_text() == "" and g._STORE_CONTACT_TEXT is None
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"found": True, "stores": [{"phone": "(731) 423-6565"}]})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"found": True, "stores": [{"phone": "(731) 423-6565"}]})
     assert "423-6565" in g.store_contact_text()  # the next call succeeds and is cached

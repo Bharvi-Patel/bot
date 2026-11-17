@@ -130,7 +130,7 @@ def test_generation_span_has_readable_input_output_and_token_usage(client):
 
 # ---------- the whole turn ----------
 def test_a_turn_produces_chat_turn_llm_tool_and_reply_check_spans(client, monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "list_brands", lambda a: {"brands": ["Acme"]})
+    monkeypatch.setitem(g.TOOLS, "list_brands", lambda a, ctx=None: {"brands": ["Acme"]})
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", "{}")
     llm = FakeLLM(LLMTurn(tool_calls=[ToolCall("list_brands", {})]), LLMTurn(text="We carry Acme."))
     out = router.answer("good morning", llm)

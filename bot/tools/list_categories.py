@@ -55,7 +55,7 @@ def rows_from_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def list_categories(args: dict[str, Any], client: ApiClient | None = None) -> dict[str, Any]:
+def list_categories(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
     try:
         unknown = set(args) - ALLOWED_KEYS
         if unknown:
@@ -67,7 +67,7 @@ def list_categories(args: dict[str, Any], client: ApiClient | None = None) -> di
         return {"error": str(exc)}
 
     try:
-        rows = rows_from_tree((client or get_client()).categories())
+        rows = rows_from_tree((client or get_client(ctx)).categories())
     except ApiError:
         return {"error": "The category list is not available right now. Do not guess category names or slugs."}
     by_id = {r["category_id"]: r for r in rows}

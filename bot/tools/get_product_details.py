@@ -89,7 +89,7 @@ NO_PRICE_NOTE = (
 )
 
 
-def get_product_details(args: dict[str, Any], client: ApiClient | None = None) -> dict[str, Any]:
+def get_product_details(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
     try:
         unknown = set(args) - ALLOWED_KEYS
         if unknown:
@@ -102,7 +102,7 @@ def get_product_details(args: dict[str, Any], client: ApiClient | None = None) -
 
     not_found = {"found": False, "note": "No active product has that identifier. Use search_products to find the right SKU."}
     try:
-        client = client or get_client()
+        client = client or get_client(ctx)
         if sku:
             slug = _slug_for_sku(client, sku)
             if not slug:

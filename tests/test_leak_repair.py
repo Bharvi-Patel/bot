@@ -30,6 +30,6 @@ def test_normal_links_and_bare_tool_names_are_not_touched():
 
 
 def test_router_sends_the_cleaned_reply_not_the_fallback(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"hours": "9-7"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"hours": "9-7"})
     out = router.answer("what are your hours?", FakeLLM(call("get_store_info"), say("We open 9-7. [Store details](get_store_info).")))
     assert out["blocked"] is None and out["reply"] == "We open 9-7."

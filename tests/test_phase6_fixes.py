@@ -89,7 +89,7 @@ def test_router_repairs_a_reply_that_copied_a_phone_from_a_policy_page(monkeypat
 
 def test_phone_from_another_tool_is_still_allowed(monkeypatch):
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", STORE)
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "(731) 423-6565"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "(731) 423-6565"})
     out = router.answer("phone?", FakeLLM(LLMTurn(tool_calls=[ToolCall("get_store_info", {})]), LLMTurn(text="Call (731) 423-6565.")))
     assert out["blocked"] is None
 

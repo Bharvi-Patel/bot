@@ -47,7 +47,7 @@ def test_invented_or_wrong_prices_are_not_repaired():
 
 
 def test_router_repairs_a_rounded_price_instead_of_sending_the_fallback(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "get_product_details", lambda a: {"name": "Loreo Sofa", "sale_price": 898.6})
+    monkeypatch.setitem(g.TOOLS, "get_product_details", lambda a, ctx=None: {"name": "Loreo Sofa", "sale_price": 898.6})
     out = router.answer("price of the Loreo sofa?", FakeLLM(call("get_product_details", sku="X"), say("The Loreo Sofa is $899.")))
     assert out["blocked"] is None and out["reply"] == "The Loreo Sofa is $898.60."
 

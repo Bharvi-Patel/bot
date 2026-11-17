@@ -3,8 +3,8 @@
 Every call sends the Store-UUID header (and the bot key, if one is configured). The bot never
 touches a store database; the API decides which store's data it sees from the UUID.
 
-Built against real responses saved in tests/fixtures/api/. Endpoints with no saved response yet
-(product search, brands) are deliberately not implemented here.
+Built against real responses saved in tests/fixtures/api/. Filters whose request format has not been
+confirmed yet (brand, price, sort) are deliberately not implemented here.
 """
 from __future__ import annotations
 
@@ -41,11 +41,18 @@ class ApiConfig:
     timeout: float = 10.0
     retries: int = 2
 
+    def __post_init__(self) -> None:
+        # urlopen also opens file:// and other schemes, so a mistyped setting must fail loudly here.
+        if not self.base_url.lower().startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+
     @classmethod
-    def from_env(cls) -> "ApiConfig":
+    def from_env(cls, store_uuid: str | None = None) -> "ApiConfig":
+        """Shared settings come from the environment. The store comes from the caller; only when none is given
+        does BOT_STORE_UUID apply (local development and single-store setups)."""
         return cls(
             base_url=os.environ["BOT_API_BASE_URL"],
-            store_uuid=os.environ["BOT_STORE_UUID"],
+            store_uuid=store_uuid or os.environ["BOT_STORE_UUID"],
             api_key=os.getenv("BOT_API_KEY") or None,
             api_key_header=os.getenv("BOT_API_KEY_HEADER") or None,
             cdn_folder=os.getenv("BOT_CDN_FOLDER") or None,
@@ -284,7 +291,8 @@ class ApiClient:
     def category_products(self, slug: str, page: int = 1) -> dict[str, Any]:
         """POST /categories/{slug}/products?page=N. 16 per page."""
         params = {"page": page} if page and page > 1 else None
-        payload = self._request("POST", f"/categories/{urllib.parse.quote(slug, safe="")}/products", params=params, body={})
+        quoted = urllib.parse.quote(slug, safe="")
+        payload = self._request("POST", f"/categories/{quoted}/products", params=params, body={})
         data = payload.get("data") if isinstance(payload, dict) else None
         paged = data.get("product") if isinstance(data, dict) else None
         if not isinstance(paged, dict):
@@ -314,7 +322,8 @@ class ApiClient:
 
     def product_detail(self, slug: str) -> dict[str, Any]:
         """GET /product/{slug}. Descriptions only exist here, not in listings."""
-        payload = self._request("GET", f"/product/{urllib.parse.quote(slug, safe="")}")
+        quoted = urllib.parse.quote(slug, safe="")
+        payload = self._request("GET", f"/product/{quoted}")
         data = payload.get("data") if isinstance(payload, dict) else None
         p = data.get("product") if isinstance(data, dict) else None
         if not isinstance(p, dict):
@@ -349,25 +358,28 @@ class ApiClient:
             "lifestyle": p.get("lifestyle"),
             "is_variant": p.get("parent_id") is not None,
             "categories": categories,
-            # attributes, colors, sizes and variations are passed through raw: no saved response has any yet,
-            # so their shape is unknown. Nothing should show them to the model until one is seen (they may
-            # carry base_price or other internal fields).
-            "attributes": p.get("attributes") or [],
-            "colors": data.get("colors") or [],
-            "sizes": data.get("sizes") or [],
-            "variations": p.get("variations") or [],
+            # attributes, colors, sizes, variations and promotions are deliberately NOT returned: no saved
+            # response has any yet, so their shape is unknown and they may carry base_price or other internal
+            # fields. Add them back, whitelisted, once a real response with data has been seen.
         }
 
 
-_DEFAULT: ApiClient | None = None
+_STORE_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
-def get_client() -> ApiClient:
-    """One client per process, built from BOT_API_BASE_URL and BOT_STORE_UUID (see ApiConfig.from_env)."""
-    global _DEFAULT
-    if _DEFAULT is None:
-        try:
-            _DEFAULT = ApiClient(ApiConfig.from_env())
-        except KeyError as exc:
-            raise ApiError(f"missing setting {exc.args[0]}; set it in the environment") from exc
-    return _DEFAULT
+def get_client(ctx: Any = None) -> ApiClient:
+    """The API client for the store this chat belongs to (ctx.store_uuid).
+
+    A new client is built on every call and nothing is cached or shared between stores, so one store's data
+    can never be served to another. If the context has no store, BOT_STORE_UUID is used (local development
+    and single-store setups). On a multi-store server leave BOT_STORE_UUID unset, so a missing store fails
+    instead of quietly answering for the wrong one."""
+    store_uuid = getattr(ctx, "store_uuid", None) or os.getenv("BOT_STORE_UUID")
+    if not store_uuid:
+        raise ApiError("no store selected: ctx.store_uuid is empty and BOT_STORE_UUID is not set")
+    if not _STORE_UUID_RE.match(store_uuid):  # it goes into a request header, so no spaces or line breaks
+        raise ApiError("the store id has characters that are not allowed")
+    try:
+        return ApiClient(ApiConfig.from_env(store_uuid))
+    except KeyError as exc:
+        raise ApiError(f"missing setting {exc.args[0]}; set it in the environment") from exc

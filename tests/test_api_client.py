@@ -234,7 +234,8 @@ def test_product_detail_normalized():
     assert d["dimensions"] == {"height": 0.0, "width": 0.0, "length": None, "depth": 0.0, "weight": None}
     assert [c["slug"] for c in d["categories"]] == ["dining-furniture-dining-room-chairs", "dining-room"]  # de-duplicated
     assert d["images"] and d["images"][0].endswith("/2261BRN.webp")
-    assert d["attributes"] == [] and d["colors"] == [] and d["sizes"] == [] and d["variations"] == []
+    for unseen in ("attributes", "colors", "sizes", "variations", "promotions", "base_price"):
+        assert unseen not in d
 
 
 def test_image_url_is_none_without_cdn_folder():
@@ -259,3 +260,11 @@ def test_to_price_rejects_non_positive():
 def test_strip_html():
     assert strip_html("<p>We accept&nbsp;cards.<br></p>") == "We accept cards."
     assert strip_html(None) == ""
+
+
+def test_base_url_must_be_http_or_https():
+    import pytest
+    for bad in ("file:///etc/passwd", "127.0.0.1:8001", "ftp://x"):
+        with pytest.raises(ValueError):
+            ApiConfig(base_url=bad, store_uuid="u")
+    ApiConfig(base_url="https://api.example.com", store_uuid="u")

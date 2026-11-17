@@ -123,6 +123,8 @@ def visitor(ctx: Any):
             from langfuse import propagate_attributes
             cid = getattr(ctx, "client_id", None)
             attrs: dict[str, Any] = {"metadata": {"logged_in": "true" if getattr(ctx, "customer_uuid", None) else "false"}}
+            if getattr(ctx, "store_uuid", None):
+                attrs["metadata"]["store"] = str(ctx.store_uuid)
             if cid:
                 attrs["user_id"] = hashlib.sha256(cid.encode()).hexdigest()[:12]
             cm = propagate_attributes(**attrs)

@@ -40,7 +40,7 @@ TOOLS = {
     "check_inventory": check_inventory,
     "get_order_status": get_order_status,
 }
-CTX_TOOLS = {"get_order_status"}   # called as fn(args, ctx=ctx)
+CTX_TOOLS = {"get_order_status", "get_store_info", "list_brands", "list_categories", "get_product_details"}   # called as fn(args, ctx=ctx)
 
 # Page text written by people can name another store or an old number, so contact details found inside it are not
 # trusted: a reply may only repeat phones/emails from other tools or from the store record (get_store_info).

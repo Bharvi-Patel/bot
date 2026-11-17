@@ -6,11 +6,11 @@ from typing import Any
 from bot.api_client import ApiClient, ApiError, get_client
 
 
-def list_brands(args: dict[str, Any], client: ApiClient | None = None) -> dict[str, Any]:
+def list_brands(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
     if args:
         return {"error": "this tool takes no parameters"}
     try:
-        rows = (client or get_client()).brands()
+        rows = (client or get_client(ctx)).brands()
     except ApiError:
         return {"error": "The brand list is not available right now. Do not guess brands; offer the store's contact details."}
 

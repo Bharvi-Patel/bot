@@ -108,11 +108,11 @@ def _address(info: dict[str, Any]) -> str | None:
     return re.sub(r"\s+", " ", text).strip(" ,") or None
 
 
-def get_store_info(args: dict[str, Any], client: ApiClient | None = None, now: datetime | None = None) -> dict[str, Any]:
+def get_store_info(args: dict[str, Any], client: ApiClient | None = None, now: datetime | None = None, ctx=None) -> dict[str, Any]:
     if args:
         return {"error": "this tool takes no parameters"}
     try:
-        info = (client or get_client()).store_info()
+        info = (client or get_client(ctx)).store_info()
     except ApiError:
         return {"error": "Store details are not available right now. Do not guess a phone number, email, address or hours."}
     if not info.get("name") and not info.get("phone") and not info.get("email"):

@@ -6,10 +6,10 @@ def test_unknown_tools_are_refused():
     assert g.run_tool("get_customer", {"email": "a@b.co"}) == {"error": "unknown_tool"}
 
 
-def test_order_tool_gets_the_context_and_other_tools_do_not(monkeypatch):
+def test_tools_that_read_store_or_customer_data_get_the_context_and_the_rest_do_not(monkeypatch):
     seen = {}
     monkeypatch.setitem(g.TOOLS, "get_order_status", lambda a, ctx=None: seen.update(ctx=ctx) or {"found": False})
-    monkeypatch.setitem(g.TOOLS, "list_brands", lambda a: {"brands": []})       # would raise TypeError if given ctx=
+    monkeypatch.setitem(g.TOOLS, "list_brands", lambda a, ctx=None: {"brands": []})       # would raise TypeError if given ctx=
     g.run_tool("get_order_status", {"order_number": "1"}, ctx="the-ctx")
     assert seen["ctx"] == "the-ctx"
     assert g.run_tool("list_brands", {}, ctx="the-ctx") == {"brands": []}

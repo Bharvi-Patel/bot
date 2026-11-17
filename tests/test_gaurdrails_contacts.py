@@ -49,7 +49,7 @@ def test_store_contact_may_be_repeated_without_a_tool_call():
 
 def test_store_contact_is_fetched_once_and_cached(monkeypatch):
     runs = []
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: runs.append(1) or {"email": "shop@store.com"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: runs.append(1) or {"email": "shop@store.com"})
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", None)
     assert "shop@store.com" in g.store_contact_text() and "shop@store.com" in g.store_contact_text()
     assert len(runs) == 1

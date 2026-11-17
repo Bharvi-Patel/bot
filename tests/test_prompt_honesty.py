@@ -217,7 +217,7 @@ def test_router_sends_a_category_question_back_when_the_model_answers_from_memor
     llm = _scripted_llm([LLMTurn(text="We sell Bedroom, Storage, Bathroom and Entryway furniture."),          # invented categories
                          LLMTurn(tool_calls=[ToolCall("list_categories", {})]),
                          LLMTurn(text="We sell Bedroom and Living Room furniture.")], seen)
-    monkeypatch.setitem(g.TOOLS, "list_categories", lambda a: {"categories": [{"slug": "bedroom", "title": "Bedroom"}]})
+    monkeypatch.setitem(g.TOOLS, "list_categories", lambda a, ctx=None: {"categories": [{"slug": "bedroom", "title": "Bedroom"}]})
     out = router.answer("what categories do you sell?", llm)
     assert out["tools_used"] == ["list_categories"] and "Storage" not in out["reply"]
     assert "Call list_categories with no arguments now" in seen[1][-1]["text"]
@@ -231,7 +231,7 @@ def test_router_makes_a_price_match_question_use_the_policy_search(monkeypatch):
                          LLMTurn(text="You can call (731) 423-6565 to ask about price matching."),           # contact only, no search
                          LLMTurn(tool_calls=[ToolCall("search_policies", {"question": "price match"})]),
                          LLMTurn(text="I don't have that information. Please call the store.")], seen)
-    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a: {"phone": "(731) 423-6565", "email": "shop@example.com"})
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "(731) 423-6565", "email": "shop@example.com"})
     monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.55, "note": "nothing"})
     out = router.answer("do you have a price match guarantee?", llm)
     assert out["tools_used"] == ["get_store_info", "search_policies"] and out["reply"].startswith("I don't have that information")
