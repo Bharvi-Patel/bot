@@ -10,8 +10,8 @@ Run from the repo folder:  python diagnose_retest.py
 from __future__ import annotations
 
 from eval_retest import CASES
-from sjbot.db import run_query
-from sjbot.tools.search_products import search_products
+from bot.db import run_query
+from bot.tools.search_products import search_products
 
 WANTED = ("retest-typo-dresser", "retest-parts-bed", "retest-refine-dining")
 

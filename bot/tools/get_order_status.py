@@ -135,7 +135,7 @@ def get_order_status(args: dict[str, Any], ctx=None, run_query: Callable | None 
         return dict(NO_MATCH)                                  # same answer as "not found"; no query needed
 
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     rows = run_query(
         f"SELECT order_uuid, order_number, order_status, grand_total, created_at FROM vw_chat_orders "

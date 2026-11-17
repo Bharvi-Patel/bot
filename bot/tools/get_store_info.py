@@ -98,7 +98,7 @@ def get_store_info(args: dict[str, Any], run_query: Callable | None = None, now:
     if args:
         return {"error": "this tool takes no parameters"}
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     rows = run_query(
         "SELECT name, phone, email, address, address2, city, state, zipcode, timezone, opening_hours "

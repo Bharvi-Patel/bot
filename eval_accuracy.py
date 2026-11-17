@@ -190,7 +190,7 @@ TOOL_CALLS: list[dict] = []
 @contextlib.contextmanager
 def watch_tool_errors():
     """Collect the names of tools that crashed (the dispatcher turns a crash into {"error": "tool_failed"}) while the block runs."""
-    from sjbot import router
+    from bot import router
     failed: list[str] = []
     real = router.run_tool
 
@@ -210,8 +210,8 @@ def watch_tool_errors():
 
 def run_case(case: dict, run_idx: int, answer_fn: Callable, llm: Any, subs: dict[str, str], rows: list[dict] | None,
              sleep: float = 0.0) -> dict:
-    from sjbot.context import ChatContext
-    from sjbot.tracing import mask
+    from bot.context import ChatContext
+    from bot.tracing import mask
     ctx = ChatContext(client_id=f"eval-{case['id']}-{run_idx}")      # a fresh visitor, so the order rate limit never interferes
     questions = [fill(q, subs) for q in case["turns"]]
     history: list[dict] = []
@@ -368,7 +368,7 @@ def preflight(cases: list[dict]) -> str | None:
     if not any(c["type"] in ("policy", "combined") or "search_policies" in c.get("tools_any", []) for c in cases):
         return None
     try:
-        from sjbot.tools.search_policies import search_policies
+        from bot.tools.search_policies import search_policies
         result = search_policies({"question": "return policy"})
     except Exception as exc:
         hint = ""
@@ -411,7 +411,7 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     runnable = [c for c in cases if all(n in subs for n in c.get("needs", []))]
     skipped = [c["id"] for c in cases if c not in runnable]
     if run_query is None:
-        from sjbot.db import run_query
+        from bot.db import run_query
     truth = {c["id"]: fetch_truth(c, subs, run_query) for c in runnable}
 
     if args.check_truth:
@@ -438,10 +438,10 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
             print(f"\nNot starting: {problem}\nFix that first (or use --skip-preflight to run anyway); no model tokens were used.")
             return 2
     if llm is None:
-        from sjbot.llm import get_llm
+        from bot.llm import get_llm
         llm = get_llm()
     if answer_fn is None:
-        from sjbot.router import answer as answer_fn
+        from bot.router import answer as answer_fn
     when = datetime.now().strftime("%Y-%m-%d %H:%M")
     RUNS_DIR.mkdir(exist_ok=True)
     path = Path(args.resume) if args.resume else RUNS_DIR / f"eval_{datetime.now():%Y%m%d_%H%M%S}.jsonl"

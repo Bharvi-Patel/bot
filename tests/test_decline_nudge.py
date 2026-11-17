@@ -1,8 +1,8 @@
 """A no-information answer, or a bare phone pointer, given without ever searching the store's pages is sent back once."""
 import pytest
 
-from sjbot import guardrails as g
-from sjbot import router
+from bot import guardrails as g
+from bot import router
 from test_router import FakeLLM, call, say
 
 

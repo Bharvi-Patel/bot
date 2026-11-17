@@ -20,7 +20,7 @@ import argparse
 import math
 from collections import Counter
 
-from sjbot import guardrails as g
+from bot import guardrails as g
 
 PAGE = 8
 
@@ -28,7 +28,7 @@ PAGE = 8
 def load_rows() -> list[dict]:
     from dotenv import load_dotenv
     load_dotenv()
-    from sjbot.db import run_query
+    from bot.db import run_query
     rows = run_query("SELECT name, price FROM vw_chat_products WHERE price IS NOT NULL AND price > 0 ORDER BY name, price", [])
     return [{"name": str(r["name"]), "price": round(float(r["price"]), 2)} for r in rows if r.get("name")]
 

@@ -14,11 +14,11 @@ import re
 import sys
 from datetime import datetime
 
-from sjbot.context import ChatContext
-from sjbot.guardrails import run_tool
-from sjbot.llm import get_llm
-from sjbot.router import answer
-from sjbot.tools.get_order_status import NO_MATCH, AttemptLimiter, get_order_status
+from bot.context import ChatContext
+from bot.guardrails import run_tool
+from bot.llm import get_llm
+from bot.router import answer
+from bot.tools.get_order_status import NO_MATCH, AttemptLimiter, get_order_status
 
 LEAKY_NO_MATCH = re.compile(r"\b(wrong|incorrect|doesn'?t (?:match|exist)|does not (?:match|exist)|not the right|no such order)\b", re.I)
 PAYMENT_CLAIM = re.compile(r"payment\s+(?:was|has been|is|went|got)\s+(?:received|successful|confirmed|processed|complete|made)|"

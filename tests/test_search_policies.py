@@ -1,4 +1,4 @@
-from sjbot.tools.search_policies import fuse, keyword_query, search_policies
+from bot.tools.search_policies import fuse, keyword_query, search_policies
 
 
 def row(i, sim, key="returns", st="policy"):
@@ -67,7 +67,7 @@ def test_db_failure_returns_safe_error():
 
 
 def test_other_showroom_sentences_are_removed_before_the_model_sees_them():
-    from sjbot.tools.search_policies import scrub_text
+    from bot.tools.search_policies import scrub_text
     text = "Snap Finance welcomes all credit types. Visit our showroom in Brooklyn or Jamaica, Queens for help. Terms are set by the lender."
     out = scrub_text(text)
     assert "Brooklyn" not in out and "Jamaica" not in out

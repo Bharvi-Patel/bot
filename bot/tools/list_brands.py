@@ -8,7 +8,7 @@ def list_brands(args: dict[str, Any], run_query: Callable | None = None) -> dict
     if args:
         return {"error": "this tool takes no parameters"}
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     rows = run_query("SELECT brand_slug, brand_name, active_products FROM vw_chat_brands ORDER BY brand_name")
 

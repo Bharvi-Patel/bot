@@ -4,7 +4,7 @@ Needs .env with RAG_DB_URL (same as the bot). Uses no LLM, so it costs no API qu
 from dotenv import load_dotenv
 load_dotenv()
 
-from sjbot.tools.search_policies import CUTOFF, search_policies
+from bot.tools.search_policies import CUTOFF, search_policies
 
 QUESTIONS = [
     "what's the difference between memory foam and hybrid mattresses?",

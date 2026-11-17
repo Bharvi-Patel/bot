@@ -3,7 +3,7 @@ Needs .env with RAG_DB_URL. Uses no LLM quota. Prints the best similarity for ea
 from dotenv import load_dotenv
 load_dotenv()
 
-import sjbot.tools.search_policies as sp
+import bot.tools.search_policies as sp
 
 ANSWERABLE = [
     "What is your return policy?", "Can I return a mattress?", "How long does delivery take?",

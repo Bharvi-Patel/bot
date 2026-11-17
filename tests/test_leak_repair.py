@@ -1,8 +1,8 @@
 """A markdown link whose target is a tool name is cut out; the rest of the answer is kept. Other leaks still block."""
 import pytest
 
-from sjbot import guardrails as g
-from sjbot import router
+from bot import guardrails as g
+from bot import router
 from test_router import FakeLLM, call, say
 
 

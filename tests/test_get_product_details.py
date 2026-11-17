@@ -1,7 +1,7 @@
 import pytest
 
-from sjbot.text import clean_text
-from sjbot.tools.get_product_details import _category_paths, get_product_details
+from bot.text import clean_text
+from bot.tools.get_product_details import _category_paths, get_product_details
 
 
 # ---------- text cleaning ----------

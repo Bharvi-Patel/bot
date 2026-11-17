@@ -39,7 +39,7 @@ def _path(by_id: dict[int, dict], row: dict) -> str:
 
 def list_categories(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     try:
         unknown = set(args) - ALLOWED_KEYS
@@ -66,7 +66,7 @@ def list_categories(args: dict[str, Any], run_query: Callable | None = None) -> 
         }
 
     if keyword:
-        from sjbot.tools.search_products import _stem          # 'beds' and 'bed' are the same word here
+        from bot.tools.search_products import _stem          # 'beds' and 'bed' are the same word here
         needle = keyword.lower()
         word = _stem(needle)
         hits = [r for r in rows if needle in (r["title"] or "").lower() or word in (r["title"] or "").lower()]

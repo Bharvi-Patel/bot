@@ -1,5 +1,5 @@
 """The prompt must tell the model (a) to answer from returned policy chunks and (b) not to claim what the store does or does not offer without a source."""
-import sjbot.guardrails as g
+import bot.guardrails as g
 
 
 def test_prompt_requires_answering_from_returned_chunks():
@@ -64,7 +64,7 @@ def test_prompt_lists_categories_and_gives_contact_when_stock_is_unknown():
 
 
 def test_top_level_category_listing_tells_the_model_to_name_the_categories():
-    from sjbot.tools.list_categories import list_categories
+    from bot.tools.list_categories import list_categories
     rows = [{"category_id": 1, "parent_id": 0, "slug": "bedroom", "title": "Bedroom"}]
     out = list_categories({}, run_query=lambda *_: rows)
     assert "Tell the customer these category names" in out["note"]
@@ -87,7 +87,7 @@ def test_order_change_requests_get_the_fixed_reply_but_policy_and_status_questio
 
 
 def test_router_answers_cancel_requests_without_calling_the_model():
-    from sjbot import router
+    from bot import router
 
     class Boom:
         def generate(self, *_a, **_k):
@@ -98,7 +98,7 @@ def test_router_answers_cancel_requests_without_calling_the_model():
 
 
 def test_order_notes_tell_the_model_to_answer_before_giving_contact_details():
-    from sjbot.tools import get_order_status as gos
+    from bot.tools import get_order_status as gos
     assert "Begin your reply with the order's status" in gos.STATUS_NOTE
     assert "Never reply with only the store's phone and email" in gos.STATUS_NOTE
     assert "Do not say whether payment was received" in gos.STATUS_NOTE and "Never repeat the customer's email" in gos.STATUS_NOTE
@@ -108,7 +108,7 @@ def test_order_notes_tell_the_model_to_answer_before_giving_contact_details():
 
 
 def test_weak_policy_matches_carry_a_warning_note_and_strong_ones_do_not():
-    from sjbot.tools.search_policies import NOTE_WEAK, search_policies
+    from bot.tools.search_policies import NOTE_WEAK, search_policies
     def row(sim):
         return {"id": 1, "source_type": "policy", "source_key": "financing", "title": "Financing", "heading": "Financing",
                 "url_path": "/financing", "content": "text", "similarity": sim}
@@ -152,7 +152,7 @@ def test_no_prefix_when_the_answer_is_real_or_the_question_is_about_the_store():
 
 
 def test_shipping_note_tells_the_model_to_say_it_has_no_delivery_time_information():
-    from sjbot.tools.get_shipping_options import get_shipping_options
+    from bot.tools.get_shipping_options import get_shipping_options
     rows = [{"zone_name": "USA", "method_name": "Local", "flat_price": 299, "note": None}]
     out = get_shipping_options({}, run_query=lambda *_: rows)
     assert "I don't have delivery time information" in out["note"] and "Never promise a delivery date" in out["note"]
@@ -167,8 +167,8 @@ def test_price_superlative_questions_need_a_fresh_product_search():
 
 
 def test_router_makes_the_model_search_again_before_answering_cheapest_from_memory(monkeypatch):
-    from sjbot import router
-    from sjbot.llm_base import LLMTurn, ToolCall
+    from bot import router
+    from bot.llm_base import LLMTurn, ToolCall
     seen = []
 
     class LLM:
@@ -210,8 +210,8 @@ def _scripted_llm(turns, seen):
 
 
 def test_router_sends_a_category_question_back_when_the_model_answers_from_memory(monkeypatch):
-    from sjbot import router
-    from sjbot.llm_base import LLMTurn, ToolCall
+    from bot import router
+    from bot.llm_base import LLMTurn, ToolCall
     seen = []
     llm = _scripted_llm([LLMTurn(text="We sell Bedroom, Storage, Bathroom and Entryway furniture."),          # invented categories
                          LLMTurn(tool_calls=[ToolCall("list_categories", {})]),
@@ -223,8 +223,8 @@ def test_router_sends_a_category_question_back_when_the_model_answers_from_memor
 
 
 def test_router_makes_a_price_match_question_use_the_policy_search(monkeypatch):
-    from sjbot import router
-    from sjbot.llm_base import LLMTurn, ToolCall
+    from bot import router
+    from bot.llm_base import LLMTurn, ToolCall
     seen = []
     llm = _scripted_llm([LLMTurn(tool_calls=[ToolCall("get_store_info", {})]),
                          LLMTurn(text="You can call (731) 423-6565 to ask about price matching."),           # contact only, no search
@@ -238,7 +238,7 @@ def test_router_makes_a_price_match_question_use_the_policy_search(monkeypatch):
 
 
 def test_brands_note_says_to_name_every_brand():
-    from sjbot.tools.list_brands import list_brands
+    from bot.tools.list_brands import list_brands
     rows = [{"brand_slug": "a", "brand_name": "A", "active_products": 3}, {"brand_slug": "b", "brand_name": "B", "active_products": 0}]
     out = list_brands({}, run_query=lambda *_: rows)
     assert "Name every brand" in out["note"] and "do not shorten or summarize the list" in out["note"]

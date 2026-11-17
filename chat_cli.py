@@ -7,9 +7,9 @@ Guests are identified as "cli" for the order-lookup rate limit. In your web endp
 """
 import sys
 
-from sjbot.context import ChatContext
-from sjbot.llm import get_llm
-from sjbot.router import answer
+from bot.context import ChatContext
+from bot.llm import get_llm
+from bot.router import answer
 
 
 def main() -> None:

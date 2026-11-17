@@ -1,9 +1,9 @@
 import pytest
 
-from sjbot.tools.check_inventory import check_inventory
-from sjbot.tools.list_attribute_values import list_attribute_values
-from sjbot.tools.list_brands import list_brands
-from sjbot.tools.search_products import (
+from bot.tools.check_inventory import check_inventory
+from bot.tools.list_attribute_values import list_attribute_values
+from bot.tools.list_brands import list_brands
+from bot.tools.search_products import (
     ATTRIBUTE_GROUPS, ToolInputError, build_missing_size_query, build_search_query, search_products,
 )
 

@@ -21,7 +21,7 @@ import hashlib
 import time
 import os
 
-from sjbot.llm_groq import GroqChat
+from bot.llm_groq import GroqChat
 
 PRESETS = {
     "mistral": dict(base_url="https://api.mistral.ai/v1", key_env="MISTRAL_API_KEY",
@@ -42,8 +42,8 @@ class OpenAICompatChat(GroqChat):
         self.model = model or os.environ.get("SJ_LLM_MODEL", cfg["model"])
         self.temperature = temperature
         self.tokens = 0
-        from sjbot.llm_groq import _tools_payload
-        from sjbot.tool_schemas import TOOL_DECLARATIONS
+        from bot.llm_groq import _tools_payload
+        from bot.tool_schemas import TOOL_DECLARATIONS
         self._tools = _tools_payload(TOOL_DECLARATIONS)
         if client is not None:                                   # tests inject a fake client
             self._client = client

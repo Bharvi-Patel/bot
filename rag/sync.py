@@ -7,8 +7,8 @@ from pgvector.psycopg import register_vector
 POLICY_TYPES = ("policy", "guide", "brand_info", "blog", "faq")      # never touches source_type='product'
 
 import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so the sjbot package is importable
-from sjbot.embeddings import embed_documents as embed                        # same model + prefixes the search tool uses
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so the bot package is importable
+from bot.embeddings import embed_documents as embed                        # same model + prefixes the search tool uses
 
 def main():
     rows = [json.loads(l) for l in open("chunks.jsonl")]

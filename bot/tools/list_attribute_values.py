@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from sjbot.tools.search_products import ATTRIBUTE_GROUPS
+from bot.tools.search_products import ATTRIBUTE_GROUPS
 
 MAX_VALUES = 40
 
@@ -23,7 +23,7 @@ def list_attribute_values(args: dict[str, Any], run_query: Callable | None = Non
         return {"error": f"unknown group. Use one of: {', '.join(ATTRIBUTE_GROUPS)}"}
 
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     rows = run_query(
         "SELECT value, COUNT(DISTINCT product_uuid) AS products\n"

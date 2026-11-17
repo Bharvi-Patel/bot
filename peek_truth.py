@@ -7,7 +7,7 @@ import importlib
 import sys
 
 from eval_accuracy import fetch_truth
-from sjbot.db import run_query
+from bot.db import run_query
 
 
 def main() -> int:

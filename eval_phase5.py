@@ -12,8 +12,8 @@ import json
 import sys
 from datetime import datetime
 
-from sjbot.llm import get_llm
-from sjbot.router import answer
+from bot.llm import get_llm
+from bot.router import answer
 
 # (Appendix D #, question, what a good answer does)
 CASES = [

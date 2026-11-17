@@ -7,7 +7,7 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from sjbot.db import run_query
+from bot.db import run_query
 
 pattern = sys.argv[1] if len(sys.argv) > 1 else "Dining%Table"
 rows = run_query("SELECT product_uuid, parent_uuid, name, price FROM vw_chat_products "

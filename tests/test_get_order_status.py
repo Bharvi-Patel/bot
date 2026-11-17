@@ -3,8 +3,8 @@ import re
 
 import pytest
 
-from sjbot.context import ChatContext
-from sjbot.tools.get_order_status import (AttemptLimiter, NO_MATCH, NOT_AVAILABLE, RATE_LIMITED, get_order_status)
+from bot.context import ChatContext
+from bot.tools.get_order_status import (AttemptLimiter, NO_MATCH, NOT_AVAILABLE, RATE_LIMITED, get_order_status)
 
 EMAIL = "order2@example.test"
 HASH = hashlib.sha256(EMAIL.encode()).hexdigest()

@@ -6,21 +6,21 @@ import os
 def get_llm():
     provider = os.environ.get("SJ_LLM_PROVIDER", "groq").lower()
     if provider == "gemini":
-        from sjbot.llm_gemini import GeminiChat
+        from bot.llm_gemini import GeminiChat
         return GeminiChat()
     if provider == "groq":
-        from sjbot.llm_groq import GroqChat
+        from bot.llm_groq import GroqChat
         llm = GroqChat()
         llm.ensure_model()
         return llm
 
     if provider == "ollama":
-        from sjbot.llm_ollama import OllamaChat
+        from bot.llm_ollama import OllamaChat
         llm = OllamaChat()
         llm.ensure_model()
         return llm
     if provider in ("mistral", "openrouter", "openai"):
-        from sjbot.llm_openai_compat import OpenAICompatChat
+        from bot.llm_openai_compat import OpenAICompatChat
         llm = OpenAICompatChat(preset=provider)
         llm.ensure_model()
         return llm

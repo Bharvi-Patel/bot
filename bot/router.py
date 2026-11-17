@@ -11,8 +11,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sjbot import tracing
-from sjbot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
+from bot import tracing
+from bot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
 
 log = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def known_brands() -> list:
     global _BRANDS
     if _BRANDS is None:
         try:
-            from sjbot.db import run_query
+            from bot.db import run_query
             rows = run_query("SELECT brand_slug, brand_name FROM vw_chat_brands WHERE active_products > 0")
             _BRANDS = [{"slug": r["brand_slug"], "name": r["brand_name"]} for r in rows if r.get("brand_slug") and r.get("brand_name")]
         except Exception:
@@ -69,7 +69,7 @@ def known_brands() -> list:
 def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
            ctx=None) -> dict:
     """Returns {"reply": str, "tools_used": [names], "blocked": reason or None}.
-    ctx (sjbot.context.ChatContext) says who is asking; your server builds it from the request, never from the message."""
+    ctx (bot.context.ChatContext) says who is asking; your server builds it from the request, never from the message."""
     question = (user_message or "").strip()[:MAX_USER_CHARS]
     if not question:
         return {"reply": "How can I help you today?", "tools_used": [], "blocked": None}
@@ -221,7 +221,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
 
 def answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
            ctx=None) -> dict:
-    """Same as before; the whole turn is also one trace when tracing is on (see sjbot/tracing.py)."""
+    """Same as before; the whole turn is also one trace when tracing is on (see bot/tracing.py)."""
     with tracing.visitor(ctx), tracing.span("chat_turn", input=str(user_message)[:MAX_USER_CHARS]) as sp:
         out = _answer(user_message, llm, history, max_calls, ctx)
         sp.update(output={"reply": out["reply"], "tools_used": out["tools_used"], "blocked": out["blocked"]})

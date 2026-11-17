@@ -1,10 +1,10 @@
 """Tracing is optional: off by default, masks personal data, and can never break the bot."""
 import pytest
 
-from sjbot import guardrails as g
-from sjbot import router, tracing
-from sjbot.context import ChatContext
-from sjbot.llm_base import LLMTurn, ToolCall
+from bot import guardrails as g
+from bot import router, tracing
+from bot.context import ChatContext
+from bot.llm_base import LLMTurn, ToolCall
 
 
 class FakeObs:

@@ -1,7 +1,7 @@
 import sys, time
 from dotenv import load_dotenv; load_dotenv()
-from sjbot import guardrails as g, router
-from sjbot.llm import get_llm
+from bot import guardrails as g, router
+from bot.llm import get_llm
 
 llm = get_llm()
 orig = llm.generate

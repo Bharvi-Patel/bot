@@ -33,7 +33,7 @@ def get_shipping_options(args: dict[str, Any], run_query: Callable | None = None
         return {"error": "zone_keyword must be short text"}
 
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     rows = run_query("SELECT zone_name, method_name, flat_price, note FROM vw_chat_shipping ORDER BY zone_name, method_name")
     needle = _norm(keyword)

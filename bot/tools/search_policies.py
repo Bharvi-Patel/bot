@@ -129,7 +129,7 @@ def search_policies(args: dict[str, Any], run_query: Callable | None = None, emb
 
     try:
         if embed_query is None:
-            from sjbot.embeddings import embed_query as default_embed
+            from bot.embeddings import embed_query as default_embed
             embed_query = default_embed
         run_query = run_query or _default_run_query
         vec = _vector_literal(embed_query(question))

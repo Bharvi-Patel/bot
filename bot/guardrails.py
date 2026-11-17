@@ -11,17 +11,17 @@ import logging
 import re
 from typing import Any
 
-from sjbot.tools.check_inventory import check_inventory
-from sjbot.tools.get_order_status import get_order_status
-from sjbot.tools.get_product_details import get_product_details
-from sjbot.tools.get_shipping_options import get_shipping_options
-from sjbot.tools.get_store_info import get_store_info
-from sjbot.tools.list_attribute_values import list_attribute_values
-from sjbot.tools.list_brands import list_brands
-from sjbot.tools.list_categories import list_categories
-from sjbot.tools.recommend_products import recommend_products
-from sjbot.tools.search_policies import search_policies
-from sjbot.tools.search_products import search_products
+from bot.tools.check_inventory import check_inventory
+from bot.tools.get_order_status import get_order_status
+from bot.tools.get_product_details import get_product_details
+from bot.tools.get_shipping_options import get_shipping_options
+from bot.tools.get_store_info import get_store_info
+from bot.tools.list_attribute_values import list_attribute_values
+from bot.tools.list_brands import list_brands
+from bot.tools.list_categories import list_categories
+from bot.tools.recommend_products import recommend_products
+from bot.tools.search_policies import search_policies
+from bot.tools.search_products import search_products
 
 log = logging.getLogger(__name__)
 
@@ -391,7 +391,7 @@ def _leak_words() -> re.Pattern:
     """Tool names and snake_case parameter names (check_inventory, category_slug, ...): never shown to customers."""
     global _LEAK_WORDS
     if _LEAK_WORDS is None:
-        from sjbot.tool_schemas import TOOL_DECLARATIONS          # imported late: tool_schemas needs the tool modules
+        from bot.tool_schemas import TOOL_DECLARATIONS          # imported late: tool_schemas needs the tool modules
         words = set(TOOLS)
         for d in TOOL_DECLARATIONS:
             words.add(d["name"])

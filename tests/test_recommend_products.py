@@ -1,5 +1,5 @@
-from sjbot.product_docs import compose_document, descendants, slugs_with_ancestors
-from sjbot.tools.recommend_products import recommend_products
+from bot.product_docs import compose_document, descendants, slugs_with_ancestors
+from bot.tools.recommend_products import recommend_products
 
 
 def doc(i, sim, sku=None, price=500.0):

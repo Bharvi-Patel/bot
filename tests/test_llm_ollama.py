@@ -3,11 +3,11 @@ import json
 import httpx
 import pytest
 
-from sjbot import llm as llm_module
-from sjbot.guardrails import SYSTEM_PROMPT
-from sjbot.llm_base import ToolCall
-from sjbot.llm_ollama import OllamaChat
-from sjbot.tool_schemas import TOOL_DECLARATIONS
+from bot import llm as llm_module
+from bot.guardrails import SYSTEM_PROMPT
+from bot.llm_base import ToolCall
+from bot.llm_ollama import OllamaChat
+from bot.tool_schemas import TOOL_DECLARATIONS
 
 
 def chat(handler, model="gpt-oss:20b", **env):
@@ -174,7 +174,7 @@ def test_ensure_model_ignores_odd_responses():
 # ---------------------------------------------------------------- provider switch
 def test_provider_switch_builds_the_ollama_adapter(monkeypatch):
     monkeypatch.setenv("SJ_LLM_PROVIDER", "ollama")
-    monkeypatch.setattr("sjbot.llm_ollama.OllamaChat.ensure_model", lambda self: None)
+    monkeypatch.setattr("bot.llm_ollama.OllamaChat.ensure_model", lambda self: None)
     assert type(llm_module.get_llm()).__name__ == "OllamaChat"
     monkeypatch.setenv("SJ_LLM_PROVIDER", "nope")
     with pytest.raises(RuntimeError, match="ollama"):

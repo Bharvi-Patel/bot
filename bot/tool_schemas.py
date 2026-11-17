@@ -2,7 +2,7 @@
 (tests/test_router.py checks this), because the tools reject anything they don't know."""
 from __future__ import annotations
 
-from sjbot.tools.search_products import ATTRIBUTE_GROUPS, SORTS
+from bot.tools.search_products import ATTRIBUTE_GROUPS, SORTS
 
 _STR = {"type": "string"}
 _NUM = {"type": "number"}

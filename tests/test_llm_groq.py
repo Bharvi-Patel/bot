@@ -2,9 +2,9 @@
 import json
 from types import SimpleNamespace as NS
 
-from sjbot.llm_base import ToolCall
-from sjbot.llm_groq import GroqChat
-from sjbot.tool_schemas import TOOL_DECLARATIONS
+from bot.llm_base import ToolCall
+from bot.llm_groq import GroqChat
+from bot.tool_schemas import TOOL_DECLARATIONS
 
 
 class FakeClient:

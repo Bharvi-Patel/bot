@@ -6,7 +6,7 @@ Needs RAG_DB_URL. The first run loads the embedding model.  Usage:  python sync_
 import json, os, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import psycopg
-from sjbot.embeddings import embed_documents
+from bot.embeddings import embed_documents
 
 
 def main():

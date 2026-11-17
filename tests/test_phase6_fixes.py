@@ -1,11 +1,11 @@
 """Regression tests for the problems found in the first manual chat session (Oct 2)."""
 import pytest
 
-from sjbot import guardrails as g
-from sjbot import router
-from sjbot.llm_base import LLMTurn, ToolCall
-from sjbot.tools.get_shipping_options import get_shipping_options
-from sjbot.tools.search_products import search_products
+from bot import guardrails as g
+from bot import router
+from bot.llm_base import LLMTurn, ToolCall
+from bot.tools.get_shipping_options import get_shipping_options
+from bot.tools.search_products import search_products
 
 # the two enabled rows in the real dev database
 SHIP = [
@@ -134,7 +134,7 @@ def test_prompt_handles_other_options_and_why_questions():
 
 
 # ---------- "show beds under $500" found nothing: the keyword was the plural 'beds' and names say 'Bed' ----------
-from sjbot.tools.search_products import _stem, build_search_query
+from bot.tools.search_products import _stem, build_search_query
 
 
 @pytest.mark.parametrize("word,stem", [("beds", "bed"), ("Sofas", "sofa"), ("loveseats", "love" + "seat"), ("mattresses", "mattress"),
@@ -162,7 +162,7 @@ def test_prompt_says_to_try_the_category_before_saying_none():
 
 
 # ---------- "show beds under $500": list_categories('bed') returned Bedroom, Mattresses and Bedding, ... and cut off 'Beds' ----------
-from sjbot.tools.list_categories import list_categories
+from bot.tools.list_categories import list_categories
 
 _T = [  # id, parent, slug, title: the bed-related rows of the real category tree
     (77, 0, "bedroom", "Bedroom"), (50, 0, "mattresses-and-bedding", "Mattresses and Bedding"), (91, 0, "kids-and-nursery", "Kids and Nursery"),

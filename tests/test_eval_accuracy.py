@@ -335,8 +335,8 @@ def test_a_crashed_tool_fails_the_case_even_if_the_reply_looks_fine():
 
 
 def test_run_case_notices_a_tool_that_crashed_during_the_conversation(monkeypatch):
-    from sjbot import guardrails as g
-    from sjbot import router
+    from bot import guardrails as g
+    from bot import router
 
     def broken(args):
         raise AttributeError("get_extended_attention_mask")
@@ -369,7 +369,7 @@ def test_preflight_is_skipped_when_no_case_needs_the_knowledge_search():
 
 
 def test_preflight_reports_a_broken_knowledge_search_with_the_known_fix(monkeypatch):
-    import sjbot.tools.search_policies as sp
+    import bot.tools.search_policies as sp
 
     def broken(args):
         raise AttributeError("'NomicBertModel' object has no attribute 'get_extended_attention_mask'")
@@ -382,7 +382,7 @@ def test_preflight_reports_a_broken_knowledge_search_with_the_known_fix(monkeypa
 
 
 def test_preflight_passes_when_the_search_works_and_flags_an_error_result(monkeypatch):
-    import sjbot.tools.search_policies as sp
+    import bot.tools.search_policies as sp
     monkeypatch.setattr(sp, "search_policies", lambda args: {"found": True, "chunks": []})
     assert ev.preflight([POLICY_CASE]) is None
     monkeypatch.setattr(sp, "search_policies", lambda args: {"error": "tool_failed"})

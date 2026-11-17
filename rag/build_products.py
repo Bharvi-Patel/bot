@@ -9,10 +9,10 @@ Writes rows in the rag_chunks shape with source_type='product'. Nothing is embed
 Only parent products (product_type = 0) are indexed; variants come later, once the parent documents work.
 """
 import argparse, json, os, pathlib, sys, time
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so sjbot is importable
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so bot is importable
 
-from sjbot.db import run_query as rq
-from sjbot.product_docs import compose_document, content_hash, descendants, slugs_with_ancestors
+from bot.db import run_query as rq
+from bot.product_docs import compose_document, content_hash, descendants, slugs_with_ancestors
 
 URL = os.environ.get("SJ_PRODUCT_URL", "/product/{slug}")        # ASSUMED storefront route: set SJ_PRODUCT_URL to the real one
 BATCH = 400

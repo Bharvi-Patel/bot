@@ -4,7 +4,7 @@ Set the SJ_DB_* variables first (see .env.example), then:  python smoke_search.p
 import json
 import time
 
-from sjbot.tools.search_products import search_products
+from bot.tools.search_products import search_products
 
 CASES = [
     {"category_slug": "sofas-and-seating-sofas", "max_price": 1000},

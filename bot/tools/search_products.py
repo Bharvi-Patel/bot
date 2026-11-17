@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
-from sjbot.config import full_image_url
+from bot.config import full_image_url
 
 MAX_RESULTS = 8  # hard cap, not a parameter
 
@@ -342,7 +342,7 @@ def _brand_from_keyword(args: dict[str, Any], run_query: Callable) -> dict[str, 
 def search_products(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
     """Tool entry point. Returns a JSON-friendly dict for the model."""
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
     args = _brand_from_keyword(args, run_query)
     try:

@@ -1,6 +1,6 @@
 import pytest
 
-from sjbot.tools.search_products import (
+from bot.tools.search_products import (
     MAX_RESULTS, ToolInputError, build_search_query, search_products,
 )
 
@@ -228,7 +228,7 @@ def test_a_search_for_the_parts_category_still_finds_them():
 
 
 def test_parts_filter_can_be_switched_off(monkeypatch):
-    from sjbot.tools import search_products as sp_mod
+    from bot.tools import search_products as sp_mod
     monkeypatch.setattr(sp_mod, "HIDE_COMPONENT_SKUS", False)
     assert len(_parts_names(_parts_db(), {})) == 4
 

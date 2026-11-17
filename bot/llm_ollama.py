@@ -23,10 +23,10 @@ import os
 
 import httpx
 
-from sjbot.guardrails import SYSTEM_PROMPT
-from sjbot.llm_base import LLMTurn, ToolCall
-from sjbot.llm_groq import HINT, _tools_payload
-from sjbot.tool_schemas import TOOL_DECLARATIONS
+from bot.guardrails import SYSTEM_PROMPT
+from bot.llm_base import LLMTurn, ToolCall
+from bot.llm_groq import HINT, _tools_payload
+from bot.tool_schemas import TOOL_DECLARATIONS
 
 DEFAULT_MODEL = "gpt-oss:20b"
 

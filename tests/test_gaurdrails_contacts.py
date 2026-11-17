@@ -1,4 +1,4 @@
-from sjbot import guardrails as g
+from bot import guardrails as g
 
 STORE = [{"phone": "(731) 423-6565", "email": "shop@store.com"}]
 
@@ -35,7 +35,7 @@ def test_prompt_has_health_and_stock_rules():
 
 
 def test_shipping_questions_are_routed_to_the_shipping_tool():
-    from sjbot.tool_schemas import TOOL_DECLARATIONS
+    from bot.tool_schemas import TOOL_DECLARATIONS
     desc = [d for d in TOOL_DECLARATIONS if d["name"] == "get_shipping_options"][0]["description"]
     assert "where the store ships" in desc and "get_shipping_options with no parameters" in g.SYSTEM_PROMPT
 
@@ -64,8 +64,8 @@ def test_failed_lookup_is_not_cached(monkeypatch):
 
 
 def test_router_lets_the_real_store_email_through(monkeypatch, tmp_path):
-    from sjbot import router
-    from sjbot.llm_base import LLMTurn
+    from bot import router
+    from bot.llm_base import LLMTurn
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", '{"email": "shop@store.com"}')
 
@@ -107,7 +107,7 @@ def test_ordinary_furniture_questions_are_not_extraction():
 
 
 def test_router_refuses_extraction_without_calling_the_model(monkeypatch, tmp_path):
-    from sjbot import router
+    from bot import router
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
 
     class Llm:
@@ -135,8 +135,8 @@ def test_repair_gives_up_when_the_store_contact_is_unknown():
 
 
 def test_router_repairs_an_invented_email(monkeypatch, tmp_path):
-    from sjbot import router
-    from sjbot.llm_base import LLMTurn
+    from bot import router
+    from bot.llm_base import LLMTurn
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", TRUSTED)
 
@@ -190,8 +190,8 @@ def test_short_or_scare_quotes_are_fine():
 
 
 def test_router_strips_an_invented_link_and_keeps_the_answer(monkeypatch, tmp_path):
-    from sjbot import router
-    from sjbot.llm_base import LLMTurn, ToolCall
+    from bot import router
+    from bot.llm_base import LLMTurn, ToolCall
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
     monkeypatch.setitem(g.TOOLS, "get_shipping_options", lambda a: SHIP[0])
 

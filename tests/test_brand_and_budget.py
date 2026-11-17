@@ -3,9 +3,9 @@
  2. the model writes a budget nobody gave ("for under $70") and the whole reply is blocked although the product price is right."""
 import pytest
 
-from sjbot import guardrails as g
-from sjbot import router
-from sjbot.tools import search_products as sp
+from bot import guardrails as g
+from bot import router
+from bot.tools import search_products as sp
 from test_router import FakeLLM, call, say
 
 

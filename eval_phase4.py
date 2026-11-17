@@ -18,10 +18,10 @@ import logging
 import sys
 from datetime import datetime
 
-from sjbot.db import run_query as rq
-from sjbot.tools.list_categories import list_categories
-from sjbot.tools.recommend_products import CUTOFF, recommend_products
-from sjbot.tools.search_policies import _default_run_query
+from bot.db import run_query as rq
+from bot.tools.list_categories import list_categories
+from bot.tools.recommend_products import CUTOFF, recommend_products
+from bot.tools.search_policies import _default_run_query
 
 PASS, REVIEW, FAIL, ERROR = "PASS", "REVIEW", "FAIL", "ERROR"
 SOFA_SLUG = "sofas-and-seating-sofas"

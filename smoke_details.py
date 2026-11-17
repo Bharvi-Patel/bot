@@ -6,8 +6,8 @@ import json
 import sys
 import time
 
-from sjbot.tools.get_product_details import get_product_details
-from sjbot.tools.search_products import search_products
+from bot.tools.get_product_details import get_product_details
+from bot.tools.search_products import search_products
 
 sku = sys.argv[1] if len(sys.argv) > 1 else None
 if not sku:

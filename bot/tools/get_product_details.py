@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from sjbot.config import full_image_url
-from sjbot.text import clean_text
+from bot.config import full_image_url
+from bot.text import clean_text
 
 MAX_VARIANTS = 30
 MAX_IMAGES = 6
@@ -82,7 +82,7 @@ def _category_paths(tree: list[dict], linked_uuids: set[str]) -> list[str]:
 
 def get_product_details(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
     if run_query is None:
-        from sjbot.db import run_query as default_run_query
+        from bot.db import run_query as default_run_query
         run_query = default_run_query
 
     try:

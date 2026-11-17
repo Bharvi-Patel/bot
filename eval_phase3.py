@@ -19,7 +19,7 @@ import os
 import sys
 from datetime import datetime
 
-from sjbot.tools.search_policies import CUTOFF, _default_run_query, search_policies
+from bot.tools.search_policies import CUTOFF, _default_run_query, search_policies
 
 PASS, REVIEW, FAIL, ERROR = "PASS", "REVIEW", "FAIL", "ERROR"
 
@@ -56,7 +56,7 @@ def write_answer(question: str, out: dict, model: str) -> str:
     import anthropic
     phone = "the store"
     try:
-        from sjbot.tools.get_store_info import get_store_info
+        from bot.tools.get_store_info import get_store_info
         phone = get_store_info({})["stores"][0]["phone"] or phone
     except Exception:
         pass

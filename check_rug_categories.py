@@ -7,7 +7,7 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from sjbot.tools.list_categories import list_categories
+from bot.tools.list_categories import list_categories
 
 word = sys.argv[1] if len(sys.argv) > 1 else "rug"
 args = {} if word == "-" else {"keyword": word}

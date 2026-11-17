@@ -13,7 +13,7 @@ import os
 import re
 from typing import Any, Callable
 
-from sjbot.tools.search_policies import _default_run_query, _vector_literal, fuse, keyword_query
+from bot.tools.search_policies import _default_run_query, _vector_literal, fuse, keyword_query
 
 log = logging.getLogger(__name__)
 
@@ -71,10 +71,10 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
 
     try:
         if embed_query is None:
-            from sjbot.embeddings import embed_query as default_embed
+            from bot.embeddings import embed_query as default_embed
             embed_query = default_embed
         if confirm is None:
-            from sjbot.tools.get_product_details import get_product_details as confirm
+            from bot.tools.get_product_details import get_product_details as confirm
         run_query = run_query or _default_run_query
         vec = _vector_literal(embed_query(query))
         fsql, fparams = _filters(args)

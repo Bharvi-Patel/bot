@@ -4,9 +4,9 @@ Set the SJ_DB_* variables first (see .env.example), then:  python smoke_all.py
 import json
 import time
 
-from sjbot.tools.get_shipping_options import get_shipping_options
-from sjbot.tools.get_store_info import get_store_info
-from sjbot.tools.list_categories import list_categories
+from bot.tools.get_shipping_options import get_shipping_options
+from bot.tools.get_store_info import get_store_info
+from bot.tools.list_categories import list_categories
 
 CASES = [
     ("list_categories (top level)", list_categories, {}),

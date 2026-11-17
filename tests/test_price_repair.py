@@ -1,6 +1,6 @@
 """Rounded prices ($185 for 185.14) are repaired to the exact price; invented prices are still blocked."""
-from sjbot import guardrails as g
-from sjbot import router
+from bot import guardrails as g
+from bot import router
 from test_router import FakeLLM, call, say
 import pytest
 

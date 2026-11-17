@@ -1,11 +1,11 @@
 import pytest
 
-from sjbot import guardrails as g
-from sjbot import router
-from sjbot.llm_base import LLMTurn, ToolCall
-from sjbot.tool_schemas import TOOL_DECLARATIONS
-from sjbot.context import ChatContext
-from sjbot.tools import (get_order_status as gos, get_product_details as gpd, list_categories as lc, recommend_products as rp,
+from bot import guardrails as g
+from bot import router
+from bot.llm_base import LLMTurn, ToolCall
+from bot.tool_schemas import TOOL_DECLARATIONS
+from bot.context import ChatContext
+from bot.tools import (get_order_status as gos, get_product_details as gpd, list_categories as lc, recommend_products as rp,
                          search_products as sp, get_shipping_options as gso)
 
 
@@ -134,7 +134,7 @@ def test_context_reaches_the_order_tool_and_the_model_cannot_supply_it(monkeypat
 def test_order_lookup_with_a_bad_context_never_reaches_the_database(monkeypatch):
     def no_db(*a, **k):
         raise AssertionError("database must not be touched")
-    monkeypatch.setattr("sjbot.db.run_query", no_db)
+    monkeypatch.setattr("bot.db.run_query", no_db)
     llm = FakeLLM(call("get_order_status", order_number="1001", email="jo@example.com"),
                   say("Order lookup is not available right now. Please contact the store."))
     out = router.answer("order 1001, jo@example.com", llm)                      # no ctx at all

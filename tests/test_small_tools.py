@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from sjbot.config import full_image_url
-from sjbot.tools.get_shipping_options import get_shipping_options
-from sjbot.tools.get_store_info import get_store_info
-from sjbot.tools.list_categories import list_categories
+from bot.config import full_image_url
+from bot.tools.get_shipping_options import get_shipping_options
+from bot.tools.get_store_info import get_store_info
+from bot.tools.list_categories import list_categories
 
 TREE = [
     {"category_id": 1, "parent_id": 0, "slug": "living-room", "title": "Living Room"},
@@ -79,7 +79,7 @@ def test_categories_bad_input(bad):
 # ---------- get_store_info ----------
 from datetime import datetime, timezone
 
-from sjbot.tools.get_store_info import format_hours, open_now
+from bot.tools.get_store_info import format_hours, open_now
 
 HOURS = {
     "friday": {"open": "09:00", "close": "19:00", "is_open": True},

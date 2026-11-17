@@ -1,4 +1,4 @@
-from sjbot import guardrails as g
+from bot import guardrails as g
 
 
 def test_unknown_tools_are_refused():

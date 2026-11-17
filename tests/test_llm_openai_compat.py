@@ -4,8 +4,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from sjbot.llm import get_llm
-from sjbot.llm_openai_compat import OpenAICompatChat
+from bot.llm import get_llm
+from bot.llm_openai_compat import OpenAICompatChat
 from tests.test_llm_groq import FakeClient, _client_with_models, reply
 
 
@@ -82,7 +82,7 @@ def test_get_llm_dispatch(monkeypatch):
 
 # 2026-11-13: ministral-8b key limited to 2 requests a minute; SJ_LLM_MIN_INTERVAL spaces the calls instead of failing with 429
 def test_min_interval_spaces_model_calls(monkeypatch):
-    import sjbot.llm_openai_compat as m
+    import bot.llm_openai_compat as m
     slept, now = [], [1000.0]
     monkeypatch.setattr(m.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(m.time, "sleep", lambda s: (slept.append(round(s, 1)), now.__setitem__(0, now[0] + s)))
