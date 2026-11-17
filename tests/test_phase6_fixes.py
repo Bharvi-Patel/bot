@@ -163,6 +163,7 @@ def test_prompt_says_to_try_the_category_before_saying_none():
 
 # ---------- "show beds under $500": list_categories('bed') returned Bedroom, Mattresses and Bedding, ... and cut off 'Beds' ----------
 from bot.tools.list_categories import list_categories
+from tests.api_fakes import TreeClient
 
 _T = [  # id, parent, slug, title: the bed-related rows of the real category tree
     (77, 0, "bedroom", "Bedroom"), (50, 0, "mattresses-and-bedding", "Mattresses and Bedding"), (91, 0, "kids-and-nursery", "Kids and Nursery"),
@@ -178,7 +179,7 @@ TREE = [{"category_id": i, "parent_id": p, "slug": s, "title": t} for i, p, s, t
 
 
 def cats(args):
-    return list_categories(args, run_query=lambda *_: [dict(r) for r in TREE])
+    return list_categories(args, client=TreeClient(TREE))
 
 
 @pytest.mark.parametrize("word", ["bed", "beds", "Beds"])

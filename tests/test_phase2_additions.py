@@ -2,7 +2,6 @@ import pytest
 
 from bot.tools.check_inventory import check_inventory
 from bot.tools.list_attribute_values import list_attribute_values
-from bot.tools.list_brands import list_brands
 from bot.tools.search_products import (
     ATTRIBUTE_GROUPS, ToolInputError, build_missing_size_query, build_search_query, search_products,
 )
@@ -71,21 +70,8 @@ def test_zero_missing_means_no_size_note():
 
 
 # ---------- list_brands ----------
-def test_brands_deduped_and_counted():
-    rows = [
-        {"brand_slug": "ashley", "brand_name": "Ashley", "active_products": 7381},
-        {"brand_slug": "ashley", "brand_name": "Ashley", "active_products": 7381},  # duplicate
-        {"brand_slug": "nectar", "brand_name": "Nectar", "active_products": 0},
-    ]
-    out = list_brands({}, run_query=lambda *_: rows)
-    assert out["count"] == 2
-    assert [b["products_available"] for b in out["brands"]] == [7381, 0]
-    assert "0" in out["note"]
-
-
-def test_brands_empty_and_args():
-    assert list_brands({}, run_query=lambda *_: [])["found"] is False
-    assert "error" in list_brands({"x": 1}, run_query=lambda *_: [])
+# list_brands now reads the store API; its tests are in tests/test_list_brands_api.py.
+# (The old database tests for product counts and 0-count brands are gone on purpose: GET /brands has no counts.)
 
 
 # ---------- list_attribute_values ----------

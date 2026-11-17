@@ -66,9 +66,10 @@ def test_prompt_lists_categories_and_gives_contact_when_stock_is_unknown():
 def test_top_level_category_listing_tells_the_model_to_name_the_categories():
     from bot.tools.list_categories import list_categories
     rows = [{"category_id": 1, "parent_id": 0, "slug": "bedroom", "title": "Bedroom"}]
-    out = list_categories({}, run_query=lambda *_: rows)
+    from tests.api_fakes import TreeClient
+    out = list_categories({}, client=TreeClient(rows))
     assert "Tell the customer these category names" in out["note"]
-    assert "note" not in list_categories({"parent_slug": "bedroom"}, run_query=lambda *_: rows)
+    assert "note" not in list_categories({"parent_slug": "bedroom"}, client=TreeClient(rows))
 
 
 def test_cancel_rule_forbids_inventing_order_details():
@@ -239,8 +240,10 @@ def test_router_makes_a_price_match_question_use_the_policy_search(monkeypatch):
 
 def test_brands_note_says_to_name_every_brand():
     from bot.tools.list_brands import list_brands
-    rows = [{"brand_slug": "a", "brand_name": "A", "active_products": 3}, {"brand_slug": "b", "brand_name": "B", "active_products": 0}]
-    out = list_brands({}, run_query=lambda *_: rows)
+    class FakeClient:
+        def brands(self):
+            return [{"slug": "a", "name": "A", "vendor": "V", "status": 1}, {"slug": "b", "name": "B", "vendor": "V", "status": 1}]
+    out = list_brands({}, client=FakeClient())
     assert "Name every brand" in out["note"] and "do not shorten or summarize the list" in out["note"]
 
 # Real replies from eval run 2026-10-13 (fresh-restocking-fee, fresh-military)

@@ -1,12 +1,14 @@
-"""list_categories: browse the category tree or find categories by name. Reads vw_chat_categories only.
+"""list_categories: browse the category tree or find categories by name. Reads the store API (GET /categories/tree).
 
-The whole tree is tiny (about 200 rows), so we read it once and shape it in Python.
+The whole tree is tiny (161 categories in the saved real response), so we read it once and shape it in Python.
 Returned slugs are what search_products takes as category_slug.
 """
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
+
+from bot.api_client import ApiClient, ApiError, get_client
 
 MAX_MATCHES = 10
 ALLOWED_KEYS = {"parent_slug", "keyword"}
@@ -37,10 +39,23 @@ def _path(by_id: dict[int, dict], row: dict) -> str:
     return " > ".join(reversed(titles))
 
 
-def list_categories(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
-    if run_query is None:
-        from bot.db import run_query as default_run_query
-        run_query = default_run_query
+def rows_from_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten the API's nested tree into rows of category_id, parent_id, slug, title. A node's parent is
+    taken from where it sits in the tree, not from a field, and roots get parent_id 0."""
+    rows: list[dict[str, Any]] = []
+
+    def walk(node: dict[str, Any], parent_id: Any) -> None:
+        cid = node.get("category_id")
+        rows.append({"category_id": cid, "parent_id": parent_id, "slug": node.get("slug"), "title": node.get("name")})
+        for child in node.get("children") or []:
+            walk(child, cid)
+
+    for n in nodes:
+        walk(n, 0)
+    return rows
+
+
+def list_categories(args: dict[str, Any], client: ApiClient | None = None) -> dict[str, Any]:
     try:
         unknown = set(args) - ALLOWED_KEYS
         if unknown:
@@ -51,7 +66,10 @@ def list_categories(args: dict[str, Any], run_query: Callable | None = None) -> 
     except ValueError as exc:
         return {"error": str(exc)}
 
-    rows = run_query("SELECT category_id, parent_id, slug, title FROM vw_chat_categories")
+    try:
+        rows = rows_from_tree((client or get_client()).categories())
+    except ApiError:
+        return {"error": "The category list is not available right now. Do not guess category names or slugs."}
     by_id = {r["category_id"]: r for r in rows}
     children: dict[int, list[dict]] = {}
     for r in rows:

@@ -1,5 +1,5 @@
-"""get_store_info: public store details (contact, address, hours). Reads vw_chat_store only,
-which leaves out email settings and other configuration.
+"""get_store_info: public store details (contact, address, hours). Reads the store API (GET /stores) through
+bot.api_client, which passes on only name, phone, email, address, hours and timezone, never the store's settings or keys.
 
 opening_hours is stored as JSON like {"monday": {"open": "09:00", "close": "19:00", "is_open": true}, ...}
 with the days in alphabetical order. We turn it into Monday-first plain lines in 12-hour time, add a
@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, time
-from typing import Any, Callable
+import re
+from typing import Any
+
+from bot.api_client import ApiClient, ApiError, get_client
 
 try:
     from zoneinfo import ZoneInfo
@@ -94,42 +97,45 @@ def open_now(hours: dict, tz_name: str | None, now: datetime | None = None) -> d
     return result
 
 
-def get_store_info(args: dict[str, Any], run_query: Callable | None = None, now: datetime | None = None) -> dict[str, Any]:
+def _address(info: dict[str, Any]) -> str | None:
+    """The API's address field already ends with city, state and zip for the saved store; tidy its spacing
+    ("Jackson , TN"). If the zip is not in it, add city, state and zip so the address is complete either way."""
+    parts = [str(info.get(k)).strip() for k in ("address", "address2") if info.get(k)]
+    text = re.sub(r"\s+,", ",", ", ".join(p for p in parts if p))
+    zipcode = str(info.get("zipcode") or "").strip()
+    if zipcode and zipcode not in text:
+        text = ", ".join(x for x in (text, info.get("city"), info.get("state"), zipcode) if x)
+    return re.sub(r"\s+", " ", text).strip(" ,") or None
+
+
+def get_store_info(args: dict[str, Any], client: ApiClient | None = None, now: datetime | None = None) -> dict[str, Any]:
     if args:
         return {"error": "this tool takes no parameters"}
-    if run_query is None:
-        from bot.db import run_query as default_run_query
-        run_query = default_run_query
-    rows = run_query(
-        "SELECT name, phone, email, address, address2, city, state, zipcode, timezone, opening_hours "
-        "FROM vw_chat_store LIMIT 3"
-    )
-    if not rows:
+    try:
+        info = (client or get_client()).store_info()
+    except ApiError:
+        return {"error": "Store details are not available right now. Do not guess a phone number, email, address or hours."}
+    if not info.get("name") and not info.get("phone") and not info.get("email"):
         return {"found": False, "note": "No store details are on file. Do not guess contact details."}
 
-    stores = []
-    for r in rows:
-        address = ", ".join(x for x in (r["address"], r["address2"], r["city"], r["state"], r["zipcode"]) if x)
-        store: dict[str, Any] = {
-            "name": r["name"],
-            "phone": r["phone"] or None,
-            "email": r["email"] or None,
-            "address": address or None,
-            "timezone": r["timezone"] or None,
-        }
-        hours = _parse_json(r["opening_hours"])
-        if isinstance(hours, dict) and any(d in hours for d in DAYS):
-            store["hours"], store["hours_summary"] = format_hours(hours)
-            status = open_now(hours, r["timezone"], now)
-            if status is not None:
-                store["open_now"] = status
-        else:
-            store["hours"] = None
-            store["hours_text"] = hours if isinstance(hours, str) else None
-        stores.append(store)
+    store: dict[str, Any] = {
+        "name": info.get("name"),
+        "phone": info.get("phone") or None,
+        "email": info.get("email") or None,
+        "address": _address(info),
+        "timezone": info.get("timezone") or None,
+    }
+    hours = info.get("opening_hours")
+    if isinstance(hours, dict) and any(d in hours for d in DAYS):
+        store["hours"], store["hours_summary"] = format_hours(hours)
+        status = open_now(hours, store["timezone"], now)
+        if status is not None:
+            store["open_now"] = status
+    else:
+        store["hours"] = None
     return {
         "found": True,
-        "stores": stores,
+        "stores": [store],
         "note": (
             "Quote hours exactly as given. Use open_now only for 'are you open right now?' questions, "
             "and mention the store's local time. Holidays are not in this data. If hours or a phone number "

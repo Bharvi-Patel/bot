@@ -1,5 +1,10 @@
+import json
+import urllib.parse
+from pathlib import Path
+
 import pytest
 
+from bot.api_client import ApiClient, ApiConfig, ApiError
 from bot.text import clean_text
 from bot.tools.get_product_details import _category_paths, get_product_details
 
@@ -29,15 +34,15 @@ def test_clean_text_empty_is_none(raw):
 
 # ---------- category paths ----------
 TREE = [
-    {"category_id": 1, "category_uuid": "c1", "parent_id": 0, "slug": "living", "title": "Living Room"},
-    {"category_id": 2, "category_uuid": "c2", "parent_id": 1, "slug": "sofas", "title": "Sofas"},
-    {"category_id": 3, "category_uuid": "c3", "parent_id": 2, "slug": "sect", "title": "Sectionals"},
-    {"category_id": 4, "category_uuid": "c4", "parent_id": 0, "slug": "bed", "title": "Bedroom"},
+    {"category_id": 1, "parent_id": 0, "slug": "living", "title": "Living Room"},
+    {"category_id": 2, "parent_id": 1, "slug": "sofas", "title": "Sofas"},
+    {"category_id": 3, "parent_id": 2, "slug": "sect", "title": "Sectionals"},
+    {"category_id": 4, "parent_id": 0, "slug": "bed", "title": "Bedroom"},
 ]
 
 
 def test_paths_keep_most_specific_and_drop_prefixes():
-    paths = _category_paths(TREE, {"c1", "c2", "c3", "c4"})
+    paths = _category_paths(TREE, {"living", "sofas", "sect", "bed"})
     assert "Living Room > Sofas > Sectionals" in paths
     assert "Living Room > Sofas" not in paths and "Living Room" not in paths
     assert "Bedroom" in paths
@@ -45,120 +50,139 @@ def test_paths_keep_most_specific_and_drop_prefixes():
 
 def test_paths_survive_a_parent_loop():
     loop = [
-        {"category_id": 1, "category_uuid": "a", "parent_id": 2, "slug": "a", "title": "A"},
-        {"category_id": 2, "category_uuid": "b", "parent_id": 1, "slug": "b", "title": "B"},
+        {"category_id": 1, "parent_id": 2, "slug": "a", "title": "A"},
+        {"category_id": 2, "parent_id": 1, "slug": "b", "title": "B"},
     ]
     assert _category_paths(loop, {"a"})  # no infinite loop
 
 
-# ---------- the tool, with a pretend database ----------
-PRODUCT = {
-    "product_uuid": "p-var", "sku": "S-BLK", "slug": "sofa-black", "name": "Sofa, Black",
-    "short_description": "<p>Roomy sofa</p>", "full_description": "<p>Long &amp; deep.</p>",
-    "special_features": "<ul><li>Washable</li></ul>", "price": 899.0, "brand_name": "Acme",
-    "height": 35.0, "width": 84.0, "length": None, "depth": 38.0, "weight": 110.0, "pieces": 1,
-    "lifestyle": "modern", "main_image": "img.jpg", "parent_uuid": "p-par",
-}
+# ---------- the tool, against real API responses ----------
+FIX = Path(__file__).parent / "fixtures" / "api"
+DETAIL_SLUG = "blanche-side-chair-brown-2261brn-s"
 
 
-def fake_db(product=PRODUCT, images=None):
-    calls = []
+class Resp:
+    status = 200
 
-    def run(sql, params=()):
-        calls.append((sql, list(params)))
-        if "FROM vw_chat_product_detail WHERE sku" in sql or "FROM vw_chat_product_detail WHERE slug" in sql:
-            return [product] if product else []
-        if "WHERE parent_uuid" in sql:
-            return [
-                {"product_uuid": "p-var", "sku": "S-BLK", "slug": "sofa-black", "name": "Sofa, Black", "price": 899.0, "main_image": "a"},
-                {"product_uuid": "p-var", "sku": "S-BLK", "slug": "sofa-black", "name": "Sofa, Black", "price": 899.0, "main_image": "a"},  # duplicate English row
-                {"product_uuid": "p-gry", "sku": "S-GRY", "slug": "sofa-grey", "name": "Sofa, Grey", "price": 949.0, "main_image": "b"},
-            ]
-        if "WHERE product_uuid = %s ORDER BY lang_row_id" in sql:
-            return [{"sku": "S", "slug": "sofa", "name": "Sofa"}]
-        if "FROM vw_chat_product_attributes" in sql:
-            return [
-                {"product_uuid": "p-var", "group_name": "Color", "value": "Black"},
-                {"product_uuid": "p-gry", "group_name": "Color", "value": "Grey"},
-                {"product_uuid": "p-par", "group_name": "Material", "value": "Fabric"},
-            ]
-        if "FROM vw_chat_product_categories" in sql:
-            return [{"category_uuid": "c3"}]
-        if "FROM vw_chat_categories" in sql:
-            return TREE
-        if "FROM vw_chat_product_images" in sql:
-            return images if images is not None else [{"image_url": "u1", "image_alt": "front", "image_type": "main"}]
-        raise AssertionError("unexpected query: " + sql)
+    def __init__(self, body):
+        self.body = body
 
-    return run, calls
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
 
 
-def test_found_product_shape_and_cleaning():
-    run, _ = fake_db()
-    out = get_product_details({"sku": "S-BLK"}, run_query=run)
+def api(detail_fixture="product_detail", cdn_folder="south-jackson", tree=True):
+    """A client whose transport serves saved real responses by URL. Returns (client, requested_urls)."""
+    urls = []
+
+    def opener(req, timeout=None):
+        urls.append(req.full_url)
+        path = urllib.parse.urlparse(req.full_url).path
+        if path.startswith("/product/"):
+            return Resp((FIX / f"{detail_fixture}.json").read_bytes())
+        if path == "/products/search":
+            return Resp((FIX / "product_search.json").read_bytes())
+        if path == "/categories/tree":
+            if not tree:
+                raise ApiError("down")
+            return Resp((FIX / "categories_tree.json").read_bytes())
+        raise AssertionError("unexpected request: " + req.full_url)
+
+    return ApiClient(ApiConfig("http://x", "uuid", cdn_folder=cdn_folder, retries=0), opener=opener), urls
+
+
+def test_found_by_slug_real_response():
+    client, urls = api()
+    out = get_product_details({"slug": DETAIL_SLUG}, client=client)
     assert out["found"] is True
     p = out["product"]
-    assert p["summary"] == "Roomy sofa" and p["description"] == "Long & deep."
-    assert p["features"] == "- Washable"
-    assert p["is_variant"] is True
-    assert out["parent"]["name"] == "Sofa"
-    assert out["categories"] == ["Living Room > Sofas > Sectionals"]
-    assert out["attributes"] == {"Color": ["Black"]}
+    assert (p["sku"], p["name"], p["brand"], p["price"]) == ("2261BRN-S", "Blanche Side Chair Brown", "Crownmark", 439.99)
+    assert p["summary"] == "Blanche Side Chair Brown" and p["description"].startswith("Bring the coordinated style")
+    assert p["is_variant"] is False and p["pieces"] == 1
+    assert p["main_image"] == "https://cdn.b3c2.com/south-jackson/images/product/2261BRN.webp"
+    assert out["images"] == [{"image_url": "https://cdn.b3c2.com/south-jackson/images/product/2261BRN.webp"}]
+    assert out["categories"] == ["Dining Room > Dining Furniture > Dining Room Chairs"]
+    assert urls[0] == f"http://x/product/{DETAIL_SLUG}"
+    assert "base_price" not in json.dumps(out) and "200" not in json.dumps(out["product"]["price"])
 
 
-def test_options_are_deduped_and_carry_their_attributes():
-    run, _ = fake_db()
-    out = get_product_details({"sku": "S-BLK"}, run_query=run)
-    assert out["option_count"] == 2
-    by_sku = {o["sku"]: o for o in out["options"]}
-    assert by_sku["S-GRY"]["attributes"] == {"Color": ["Grey"]}
-    assert by_sku["S-BLK"]["is_this_product"] is True
+def test_note_says_options_are_unknown():
+    out = get_product_details({"slug": DETAIL_SLUG}, client=api()[0])
+    assert "Do not say whether other colors" in out["note"]
+    assert "options" not in out and "attributes" not in out
 
 
-def test_dimension_note_is_included():
-    run, _ = fake_db()
-    assert "unit" in get_product_details({"sku": "S-BLK"}, run_query=run)["product"]["dimension_note"]
+def test_all_zero_dimensions_say_so():
+    p = get_product_details({"slug": DETAIL_SLUG}, client=api()[0])["product"]
+    assert p["dimensions"] is None and "do not estimate" in p["dimension_note"]
 
 
-def test_not_found():
-    run, _ = fake_db(product=None)
-    out = get_product_details({"sku": "NOPE"}, run_query=run)
+def test_no_cdn_folder_means_no_image_links():
+    out = get_product_details({"slug": DETAIL_SLUG}, client=api(cdn_folder=None)[0])
+    assert out["product"]["main_image"] is None and out["images"] == []
+
+
+def test_category_tree_down_falls_back_to_titles():
+    out = get_product_details({"slug": DETAIL_SLUG}, client=api(tree=False)[0])
+    assert out["found"] and sorted(out["categories"]) == ["Dining Room", "Dining Room Chairs"]
+
+
+def test_sku_is_resolved_through_search_then_detail():
+    client, urls = api()
+    sku = "I-105XLW - Twin/Full/Queen RC 70327"  # a real SKU from the saved search response
+    out = get_product_details({"sku": sku.lower(), "slug": "ignored"}, client=client)
+    assert out["found"] is True
+    assert urls[0] == "http://x/products/search"
+    assert urls[1] == "http://x/product/i-105xlw-twin-full-queen-i-105xlw-twin-full-queen-rc-70327"
+
+
+def test_sku_not_in_search_results_is_not_found():
+    out = get_product_details({"sku": "NOPE-123"}, client=api()[0])
     assert out["found"] is False and "search_products" in out["note"]
 
 
-def test_variant_without_images_falls_back_to_parent_images():
-    run, calls = fake_db(images=[])
-    get_product_details({"sku": "S-BLK"}, run_query=run)
-    image_calls = [c for c in calls if "vw_chat_product_images" in c[0]]
-    assert len(image_calls) == 2 and image_calls[1][1][0] == "p-par"
+def test_missing_product_404_is_not_found():
+    def opener(req, timeout=None):
+        import io
+        import urllib.error
+        raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, io.BytesIO(b'{"success":false,"message":"No query results","response_code":404}'))
+    client = ApiClient(ApiConfig("http://x", "uuid", retries=0), opener=opener)
+    out = get_product_details({"slug": "nope"}, client=client)
+    assert out["found"] is False and "search_products" in out["note"]
 
 
-def test_sku_preferred_over_slug_and_value_is_a_parameter():
-    run, calls = fake_db()
-    evil = "x' OR 1=1 --"
-    get_product_details({"sku": evil, "slug": "ignored"}, run_query=run)
-    sql, params = calls[0]
-    assert "sku = %s" in sql and "slug = %s" not in sql
-    assert evil not in sql and params == [evil]
+def test_api_down_gives_safe_error():
+    def opener(req, timeout=None):
+        raise TimeoutError()
+    client = ApiClient(ApiConfig("http://x", "uuid", retries=0), opener=opener)
+    assert "Do not guess" in get_product_details({"slug": "x"}, client=client)["error"]
+
+
+def test_a_non_positive_price_is_not_quoted():
+    class C:
+        def product_detail(self, slug):
+            return {"slug": "s", "sku": "S", "name": "Mattress", "brand": None, "price": None, "short_description": None,
+                    "description": None, "special_features": None, "main_image": None, "images": [], "categories": [],
+                    "dimensions": {}, "pieces": None, "lifestyle": None, "is_variant": False}
+
+        def categories(self):
+            return []
+    out = get_product_details({"slug": "s"}, client=C())
+    assert out["product"]["price"] is None and "Do not state or guess a price" in out["note"]
 
 
 @pytest.mark.parametrize("bad", [{}, {"sku": ""}, {"sku": 5}, {"sku": "x" * 500}, {"upc": "123"}])
 def test_bad_input_returns_error_not_exception(bad):
-    run, _ = fake_db()
-    assert "error" in get_product_details(bad, run_query=run)
+    assert "error" in get_product_details(bad, client=api()[0])
 
 
-def test_all_null_dimensions_say_so():
-    empty = dict(PRODUCT, width=None, height=None, depth=None, length=None, weight=None)
-    run, _ = fake_db(product=empty)
-    p = get_product_details({"sku": "S-BLK"}, run_query=run)["product"]
-    assert p["dimensions"] is None
-    assert "do not estimate" in p["dimension_note"]
-
-
-def test_images_use_base_url(monkeypatch):
-    monkeypatch.setenv("SJ_IMAGE_BASE_URL", "https://shop.example/media")
-    run, _ = fake_db()
-    out = get_product_details({"sku": "S-BLK"}, run_query=run)
-    assert out["images"][0]["image_url"] == "https://shop.example/media/u1"
-    assert out["product"]["main_image"] == "https://shop.example/media/img.jpg"
+def test_unsafe_slug_is_quoted_in_the_path():
+    client, urls = api()
+    get_product_details({"slug": "a/b?c"}, client=client)
+    assert urls[0] == "http://x/product/a%2Fb%3Fc"

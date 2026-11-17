@@ -423,7 +423,10 @@ def store_contact_text() -> str:
     global _STORE_CONTACT_TEXT
     if _STORE_CONTACT_TEXT is None:
         try:
-            _STORE_CONTACT_TEXT = json.dumps(TOOLS["get_store_info"]({}), default=str, ensure_ascii=False)
+            info = TOOLS["get_store_info"]({})
+            if not isinstance(info, dict) or info.get("error") or info.get("found") is False:
+                return ""  # unavailable or empty: do not cache it, so the next call tries again
+            _STORE_CONTACT_TEXT = json.dumps(info, default=str, ensure_ascii=False)
         except Exception:
             log.exception("could not load store contact details")
             return ""

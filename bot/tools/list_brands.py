@@ -1,28 +1,27 @@
-"""list_brands: the brands the store carries. Reads vw_chat_brands only."""
+"""list_brands: the brands the store carries. Reads the store API (GET /brands), never the database."""
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
+
+from bot.api_client import ApiClient, ApiError, get_client
 
 
-def list_brands(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
+def list_brands(args: dict[str, Any], client: ApiClient | None = None) -> dict[str, Any]:
     if args:
         return {"error": "this tool takes no parameters"}
-    if run_query is None:
-        from bot.db import run_query as default_run_query
-        run_query = default_run_query
-    rows = run_query("SELECT brand_slug, brand_name, active_products FROM vw_chat_brands ORDER BY brand_name")
+    try:
+        rows = (client or get_client()).brands()
+    except ApiError:
+        return {"error": "The brand list is not available right now. Do not guess brands; offer the store's contact details."}
 
-    seen, brands = set(), []
+    brands = []
     for r in rows:
-        key = (r["brand_slug"] or r["brand_name"] or "").lower()
-        if not key or key in seen:
+        # status 0 is skipped. That it means "switched off" is not confirmed with the API team yet;
+        # every brand in the saved real response has status 1, so this changes nothing today.
+        if r.get("status") == 0 or not r.get("slug") or not r.get("name"):
             continue
-        seen.add(key)
-        brands.append({
-            "slug": r["brand_slug"],
-            "name": r["brand_name"],
-            "products_available": int(r["active_products"] or 0),
-        })
+        brands.append({"slug": r["slug"], "name": r["name"]})
+    brands.sort(key=lambda b: b["name"].lower())
     if not brands:
         return {"found": False, "note": "No brand information is on file."}
     return {
@@ -30,8 +29,8 @@ def list_brands(args: dict[str, Any], run_query: Callable | None = None) -> dict
         "count": len(brands),
         "brands": brands,
         "note": (
-            "Name every brand with products_available above 0, all of them; do not shorten or summarize the list. "
-            "Those are the brands the store carries now. "
-            "A brand with 0 has no current products; do not list it as available."
+            "Name every brand listed above, all of them; do not shorten or summarize the list. "
+            "This list does not say how many products each brand has or whether any are in stock; "
+            "do not claim a brand has products available. To see a brand's products, search with its slug."
         ),
     }
