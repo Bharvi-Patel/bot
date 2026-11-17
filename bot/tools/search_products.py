@@ -2,13 +2,15 @@
 
 The model only chooses filter values; this tool decides which API calls to make.
 
-What the store API is known to do (from saved real responses): keyword search with {"q": ...}, and a product
-listing for one category. How brand, price range, sort and attributes are sent to the API is NOT known yet, so:
-  - brand, price limits and price sorting are applied here, on the pages fetched (at most MAX_PAGES x 16 products);
-  - when a request needs the whole match list (sorting by price) and there are more matches than that, the tool
-    says so instead of answering from part of the list;
-  - color, material, attribute and width filters cannot be applied at all, and the tool says that.
-Once the API's filter format is known, these local steps can be replaced by API parameters.
+What the store API is known to do (from saved real responses and captures): keyword search with {"q": ...} (at least
+2 characters), and a product listing for one category. Brand (brand_ids, the brand's uuid) and price range
+(price_range {"from","to"}) are sent to the API, so the pages read are the matching ones; both are still re-checked here
+on what comes back. Not sent to the API yet:
+  - price sorting is done here, on the pages fetched (at most MAX_PAGES x 16 products); when a request needs the whole
+    match list and there are more matches than that, the tool says so instead of answering from part of the list.
+    (The API's own price_low_high order lists the -0.01 placeholder products first, so it cannot be used as is.)
+  - color, material, attribute and width filters cannot be applied, and the tool says that. Several attribute ids sent
+    together mean "any of" on the API, which needs handling before they are used.
 """
 from __future__ import annotations
 
@@ -172,7 +174,8 @@ def _is_component(name: str) -> bool:
     return any(p.search(name or "") for p in COMPONENT_NAME_PATTERNS)
 
 
-def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bool, base_ok, price_ok) -> dict[str, Any]:
+def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bool, base_ok, price_ok,
+           api_filters: dict[str, Any] | None = None) -> dict[str, Any]:
     """Page through the API. Returns the items that pass every filter ("kept"), the ones that pass every filter except
     price ("base_kept"), how many products were checked, the API's total and whether every page was read. Stops early
     once enough matches exist, unless the whole list is needed."""
@@ -183,9 +186,9 @@ def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bo
     while pages < MAX_PAGES:
         pages += 1
         if v["category_slug"]:
-            res = client.category_products(v["category_slug"], page=pages)
+            res = client.category_products(v["category_slug"], page=pages, **(api_filters or {}))
         else:
-            res = client.search_products(query, page=pages)
+            res = client.search_products(query, page=pages, **(api_filters or {}))
         total, last_page = res.get("total"), res.get("last_page") or 1
         checked += len(res["products"])
         for p in res["products"]:
@@ -231,6 +234,9 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
         query = keyword or brand_name
         if not v["category_slug"] and not query:
             return {"error": "give at least a keyword, a category_slug or a brand_slug"}
+        if not v["category_slug"] and len(query) < 2:   # the store's search rejects anything shorter than 2 characters
+            return {"error": "keyword_too_short",
+                    "note": "The search needs a keyword of at least 2 letters. Ask the customer what they are looking for."}
 
         lo, hi, sort = v["min_price"], v["max_price"], v["sort"]
         words = keyword.split()[:5] if (keyword and v["category_slug"]) else []   # a category listing has no keyword filter
@@ -253,8 +259,19 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
                 return not price_filtered and sort == "name"
             return (lo is None or price >= lo) and (hi is None or price <= hi)
 
+        # The API narrows the list by brand and price, so the pages read are the matching ones. Both are re-checked
+        # below on what comes back. A brand without an id in the brand list is filtered here only, as before.
+        api_filters: dict[str, Any] = {}
+        brand_uuid = next((b.get("uuid") for b in brands if brand_slug and b.get("slug") == brand_slug), None)
+        if brand_uuid:
+            api_filters["brand_ids"] = [brand_uuid]
+        if lo is not None:
+            api_filters["price_from"] = lo
+        if hi is not None:
+            api_filters["price_to"] = hi
+
         need_all = sort in ("price_asc", "price_desc")
-        fetched = _fetch(client, v, query, need_all, base_filter, price_ok)
+        fetched = _fetch(client, v, query, need_all, base_filter, price_ok, api_filters)
         window = None
         if need_all and not fetched["complete"]:
             return {

@@ -1,0 +1,11 @@
+{
+ "request": {
+  "method": "POST",
+  "path": "/product-filter-data",
+  "body": {
+   "category_slug": "bedroom-furniture-beds"
+  }
+ },
+ "status": 200,
+ "response": "{\"success\":true,\"message\":\"Filter params get successfully.\",\"response_code\":200,\"category\":{\"id\":44,\"slug\":\"bedroom-furniture-beds\"},\"price_range\":{\"min_price\":39.99,\"max_price\":6139.99},\"brands\":[{\"uuid\":\"24535729948324335664029000859186\",\"vendor_id\":\"93218714396753557258029731795844\",\"slug\":\"foa\",\"status\":1,\"product_count\":909,\"brand_languages\":[{\"brand_id\":\"24535729948324335664029000859186\",\"name\":\"Furniture Of America\"}]},{\"uuid\":\"82287314333460330709864338493011\",\"vendor_id\":\"d7f9d24a5f714f50d26a0d095799611e\",\"slug\":\"coaster\",\"status\":1,\"product_count\":999,\"brand_languages\":[{\"brand_id\":\"82287314333460330709864338493011\",\"name\":\"Coaster\"}]},{\"uuid\":\"23432481419940335885037299152755\",\"vendor_id\":\"47586358464761555465684457393699\",\"slug\":\"crownmark\",\"status\":1,\"product_count\":94,\"brand_languages\":[{\"brand_id\":\"23432481419940335885037299152755\",\"name\":\"Crownmark\"}]},{\"uuid\":\"86564643978716017126298827124399\",\"vendor_id\":\"41034730047419993360675072969685\",\"slug\":\"acme\",\"status\":1,\"product_count\":156,\"brand_languages\":[{\"brand_id\":\"86564643978716017126298827124399\",\"name\":\"Acme\"}]},{\"uuid\":\"84595262741320194399393993711311\",\"vendor_id\":\"12397034947391014042170040007085\",\"slug\":\"happy-home\",\"status\":1,\"product_count\":45,\"brand_languages\":[{\"brand_id\":\"84595262741320194399393993711311\",\"name\":\"Happy Home\"}]}],\"attribute_groups\":[]}"
+}

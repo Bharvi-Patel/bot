@@ -3,8 +3,9 @@
 Every call sends the Store-UUID header (and the bot key, if one is configured). The bot never
 touches a store database; the API decides which store's data it sees from the UUID.
 
-Built against real responses saved in tests/fixtures/api/. Filters whose request format has not been
-confirmed yet (brand, price, sort) are deliberately not implemented here.
+Built against real responses saved in tests/fixtures/api/. Listing filters sent so far (brand_ids, price_range,
+per_page) use formats confirmed against the real API. Sorting and attribute filters are deliberately not sent yet:
+price_low_high lists the -0.01 placeholder products first, and several attribute ids mean "any of".
 """
 from __future__ import annotations
 
@@ -59,6 +60,35 @@ class ApiConfig:
             timeout=float(os.getenv("BOT_API_TIMEOUT", "10")),
             retries=int(os.getenv("BOT_API_RETRIES", "2")),
         )
+
+
+_FILTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _filter_body(brand_ids: list[str] | None, price_from: float | None, price_to: float | None,
+                 per_page: int | None) -> dict[str, Any]:
+    """The filter part of a listing request, in the formats the real API accepted:
+    brand_ids as a list of brand uuids, price_range as {"from": n, "to": n} (the {"min","max"} form is ignored),
+    per_page as a number. Anything else is a bug in the caller, so it raises ValueError."""
+    body: dict[str, Any] = {}
+    if brand_ids:
+        if not isinstance(brand_ids, (list, tuple)) or not all(isinstance(b, str) and _FILTER_ID_RE.match(b) for b in brand_ids):
+            raise ValueError("brand_ids must be a list of brand uuids")
+        body["brand_ids"] = list(brand_ids)
+    price: dict[str, float] = {}
+    for key, value in (("from", price_from), ("to", price_to)):
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or value < 0:
+            raise ValueError(f"price_{key} must be a number that is not negative")
+        price[key] = value
+    if price:
+        body["price_range"] = price
+    if per_page is not None:
+        if isinstance(per_page, bool) or not isinstance(per_page, int) or not 1 <= per_page <= 40:
+            raise ValueError("per_page must be a whole number from 1 to 40")  # 40 is the largest size tried on the real API
+        body["per_page"] = per_page
+    return body
 
 
 # ---------- small helpers ----------
@@ -239,6 +269,7 @@ class ApiClient:
                     continue
                 seen.add(b.get("slug"))
                 out.append({
+                    "uuid": b.get("uuid"),   # the id brand_ids filters on (same id the search facets list)
                     "slug": b.get("slug"),
                     "name": _first_language(b.get("brand_languages")).get("name"),
                     "vendor": v.get("name"),
@@ -246,11 +277,20 @@ class ApiClient:
                 })
         return out
 
-    def search_products(self, query: str, page: int = 1) -> dict[str, Any]:
-        """POST /products/search?page=N with {"q": query}. Only the "q" filter is confirmed so far;
-        other filters (brand, category, price, sort) are not implemented until their request format is known."""
+    def search_products(self, query: str, page: int = 1, *, brand_ids: list[str] | None = None,
+                        price_from: float | None = None, price_to: float | None = None,
+                        per_page: int | None = None) -> dict[str, Any]:
+        """POST /products/search?page=N with {"q": query} plus the filters confirmed against the real API
+        (tests/fixtures/api and the captures of 16-17 Nov): brand_ids, price_range {"from","to"} and per_page.
+        The API requires q to be at least 2 characters (HTTP 422 otherwise), so that is checked here.
+        Sorting and attribute filters are NOT sent yet: price_low_high lists the -0.01 placeholder products first,
+        and several attribute ids mean "any of", so both need design work in the tool first."""
+        query = (query or "").strip()
+        if len(query) < 2:
+            raise ApiError("search text must be at least 2 characters", status=422)
         params = {"page": page} if page and page > 1 else None
-        payload = self._request("POST", "/products/search", params=params, body={"q": query})
+        body = {"q": query, **_filter_body(brand_ids, price_from, price_to, per_page)}
+        payload = self._request("POST", "/products/search", params=params, body=body)
         data = payload.get("data") if isinstance(payload, dict) else None
         paged = data.get("product") if isinstance(data, dict) else None
         if not isinstance(paged, dict):
@@ -288,11 +328,22 @@ class ApiClient:
             "children": [self._category_node(c) for c in node.get("children") or [] if isinstance(c, dict)],
         }
 
-    def category_products(self, slug: str, page: int = 1) -> dict[str, Any]:
-        """POST /categories/{slug}/products?page=N. 16 per page."""
+    def category_products(self, slug: str, page: int = 1, *, brand_ids: list[str] | None = None,
+                          price_from: float | None = None, price_to: float | None = None,
+                          per_page: int | None = None) -> dict[str, Any]:
+        """POST /categories/{slug}/products?page=N, 16 per page unless per_page is given.
+
+        PAGING WORKAROUND: the API caches an unfiltered category list for 24 hours under a key with no page number,
+        so every page of it comes back as page 1 (seen in the real API, 17 Nov; see its ProductController).
+        A request with any filter uses a cache key that includes the page. So an unfiltered request is sent with
+        price_range {"from": 0}, which leaves the results unchanged (same totals on two real categories) and makes
+        paging work. Remove this once the API's cache key includes the page."""
+        if price_from is None and price_to is None:
+            price_from = 0
         params = {"page": page} if page and page > 1 else None
         quoted = urllib.parse.quote(slug, safe="")
-        payload = self._request("POST", f"/categories/{quoted}/products", params=params, body={})
+        payload = self._request("POST", f"/categories/{quoted}/products", params=params,
+                                body=_filter_body(brand_ids, price_from, price_to, per_page))
         data = payload.get("data") if isinstance(payload, dict) else None
         paged = data.get("product") if isinstance(data, dict) else None
         if not isinstance(paged, dict):

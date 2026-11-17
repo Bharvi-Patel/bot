@@ -1,0 +1,30 @@
+00_search_bed                          POST /products/search                           status=200 total=4976 page=1/311 per_page=16 on_page=16 price_min=59.99 price_max=1199.99 nonpositive_prices=7
+test values: queen=67ace390fcb040008ecdc568b52e13f2 brand=24535729948324335664029000859186
+01_categories_tree                     GET /categories/tree                           status=200 
+category slugs used: ['bedroom-furniture-beds', 'kids-furniture-beds']
+10_bedroom_unfiltered                  POST /categories/bedroom-furniture-beds/products status=200 total=1427 page=1/90 per_page=16 on_page=16 price_min=299.99 price_max=359.99 nonpositive_prices=12
+11_bedroom_queen                       POST /categories/bedroom-furniture-beds/products status=200 total=29 page=1/2 per_page=16 on_page=16 price_min=None price_max=None nonpositive_prices=16
+12_bedroom_queen_price_sort            POST /categories/bedroom-furniture-beds/products status=200 total=29 page=1/2 per_page=16 on_page=16 price_min=None price_max=None nonpositive_prices=16
+13_bedroom_brand_price_sort            POST /categories/bedroom-furniture-beds/products status=200 total=507 page=1/32 per_page=16 on_page=16 price_min=259.99 price_max=279.99 nonpositive_prices=0
+14_bedroom_price_from_only             POST /categories/bedroom-furniture-beds/products status=200 total=451 page=1/29 per_page=16 on_page=16 price_min=1139.99 price_max=2399.99 nonpositive_prices=2
+15_bedroom_price_to_only               POST /categories/bedroom-furniture-beds/products status=200 total=207 page=1/13 per_page=16 on_page=16 price_min=159.99 price_max=299.99 nonpositive_prices=6
+16_bedroom_price_100_1500              POST /categories/bedroom-furniture-beds/products status=200 total=1286 page=1/81 per_page=16 on_page=16 price_min=299.99 price_max=359.99 nonpositive_prices=12
+17_bedroom_page2                       POST /categories/bedroom-furniture-beds/products?page=2 status=200 total=1427 page=1/90 per_page=16 on_page=16 price_min=299.99 price_max=359.99 nonpositive_prices=12
+18_bedroom_per_page_40_body            POST /categories/bedroom-furniture-beds/products status=200 total=1427 page=1/90 per_page=16 on_page=16 price_min=299.99 price_max=359.99 nonpositive_prices=12
+19_bedroom_per_page_40_query           POST /categories/bedroom-furniture-beds/products?per_page=40 status=200 total=1427 page=1/90 per_page=16 on_page=16 price_min=299.99 price_max=359.99 nonpositive_prices=12
+20_bedroom_filter_data                 POST /product-filter-data                       status=200 
+10_kids_unfiltered                     POST /categories/kids-furniture-beds/products   status=200 total=84 page=1/6 per_page=16 on_page=16 price_min=419.99 price_max=1459.99 nonpositive_prices=0
+11_kids_queen                          POST /categories/kids-furniture-beds/products   status=200 total=0 page=1/1 per_page=16 on_page=0 price_min=None price_max=None nonpositive_prices=0
+12_kids_queen_price_sort               POST /categories/kids-furniture-beds/products   status=200 total=0 page=1/1 per_page=16 on_page=0 price_min=None price_max=None nonpositive_prices=0
+13_kids_brand_price_sort               POST /categories/kids-furniture-beds/products   status=200 total=18 page=1/2 per_page=16 on_page=16 price_min=259.99 price_max=789.99 nonpositive_prices=0
+14_kids_price_from_only                POST /categories/kids-furniture-beds/products   status=200 total=17 page=1/2 per_page=16 on_page=16 price_min=1099.99 price_max=1829.99 nonpositive_prices=0
+15_kids_price_to_only                  POST /categories/kids-furniture-beds/products   status=200 total=10 page=1/1 per_page=16 on_page=10 price_min=89.99 price_max=279.99 nonpositive_prices=0
+16_kids_price_100_1500                 POST /categories/kids-furniture-beds/products   status=200 total=74 page=1/5 per_page=16 on_page=16 price_min=419.99 price_max=1459.99 nonpositive_prices=0
+17_kids_page2                          POST /categories/kids-furniture-beds/products?page=2 status=200 total=84 page=1/6 per_page=16 on_page=16 price_min=419.99 price_max=1459.99 nonpositive_prices=0
+18_kids_per_page_40_body               POST /categories/kids-furniture-beds/products   status=200 total=84 page=1/6 per_page=16 on_page=16 price_min=419.99 price_max=1459.99 nonpositive_prices=0
+19_kids_per_page_40_query              POST /categories/kids-furniture-beds/products?per_page=40 status=200 total=84 page=1/6 per_page=16 on_page=16 price_min=419.99 price_max=1459.99 nonpositive_prices=0
+20_kids_filter_data                    POST /product-filter-data                       status=200 
+30_search_queen_price_sort             POST /products/search                           status=200 total=50 page=1/4 per_page=16 on_page=16 price_min=None price_max=None nonpositive_prices=16
+31_search_price_100_1500               POST /products/search                           status=200 total=3741 page=1/234 per_page=16 on_page=16 price_min=259.99 price_max=1199.99 nonpositive_prices=8
+32_search_page2_brand                  POST /products/search?page=2                    status=200 total=1695 page=2/106 per_page=16 on_page=16 price_min=359.99 price_max=4019.99 nonpositive_prices=0
+33_search_per_page_40                  POST /products/search                           status=200 total=4976 page=1/125 per_page=40 on_page=40 price_min=59.99 price_max=1699.99 nonpositive_prices=12

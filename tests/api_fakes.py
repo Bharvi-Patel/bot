@@ -34,6 +34,7 @@ class CatalogClient:
         self._brands = brands if brands is not None else []
         self._tree = tree or []
         self.calls = []
+        self.filters = []   # the API filters each search/category call was given, in call order
 
     def brands(self):
         self.calls.append(("brands",))
@@ -48,14 +49,16 @@ class CatalogClient:
         chunk = items[(page - 1) * self.PER_PAGE: page * self.PER_PAGE]
         return {"page": page, "last_page": last, "per_page": self.PER_PAGE, "total": len(items), "products": chunk}
 
-    def search_products(self, query, page=1):
+    def search_products(self, query, page=1, **filters):
         self.calls.append(("search", query, page))
+        self.filters.append(filters)
         words = query.lower().split()
         hits = [p for p in self.products if all(w in p["name"].lower() or w in (p.get("brand") or "").lower() for w in words)]
         return self._page(hits, page)
 
-    def category_products(self, slug, page=1):
+    def category_products(self, slug, page=1, **filters):
         self.calls.append(("category", slug, page))
+        self.filters.append(filters)
         from bot.api_client import ApiError
         if slug not in self.by_category:
             raise ApiError("No query results", status=404)

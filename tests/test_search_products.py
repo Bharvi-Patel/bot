@@ -348,3 +348,50 @@ def test_real_category_listing_with_a_price_limit():
 def test_real_unknown_category_404():
     out = search_products({"category_slug": "nope"}, client=real_client())
     assert out["error"] == "unknown_category"
+
+
+# ---------- filters handed to the API ----------
+BRANDS_WITH_IDS = [{"uuid": "u-acme", "slug": "acme", "name": "Acme", "vendor": "V", "status": 1},
+                   {"uuid": None, "slug": "coaster", "name": "Coaster", "vendor": "V", "status": 1}]
+
+
+def test_brand_and_price_limits_are_sent_to_the_api_on_a_search():
+    c = CatalogClient(beds(3), brands=BRANDS_WITH_IDS)
+    search_products({"keyword": "bed", "brand_slug": "acme", "min_price": 50, "max_price": 500}, client=c)
+    assert c.filters == [{"brand_ids": ["u-acme"], "price_from": 50.0, "price_to": 500.0}]
+
+
+def test_brand_and_price_limits_are_sent_to_the_api_on_a_category_listing():
+    c = CatalogClient(by_category={"beds": beds(3)}, brands=BRANDS_WITH_IDS)
+    search_products({"category_slug": "beds", "brand_slug": "acme", "max_price": 500}, client=c)
+    assert c.filters == [{"brand_ids": ["u-acme"], "price_to": 500.0}]
+
+
+def test_no_filters_are_sent_when_none_were_asked_for():
+    c = CatalogClient(beds(3), brands=BRANDS_WITH_IDS)
+    search_products({"keyword": "bed"}, client=c)
+    assert c.filters == [{}]
+
+
+def test_brand_without_an_id_is_filtered_by_the_tool_only():
+    c = CatalogClient([item("C1", "Coaster Bed", 100, "Coaster"), item("A1", "Acme Bed", 100, "Acme")], brands=BRANDS_WITH_IDS)
+    res = search_products({"keyword": "bed", "brand_slug": "coaster"}, client=c)
+    assert c.filters == [{}] and [p["sku"] for p in res["products"]] == ["C1"]
+
+
+def test_price_limits_are_still_checked_on_what_the_api_returns():
+    c = CatalogClient([item("A", "Bed A", 40), item("B", "Bed B", 400), item("C", "Bed C", 900)], brands=BRANDS_WITH_IDS)
+    res = search_products({"keyword": "bed", "min_price": 50, "max_price": 500}, client=c)
+    assert [p["sku"] for p in res["products"]] == ["B"]
+
+
+def test_a_one_letter_keyword_is_refused_without_searching():
+    c = CatalogClient(beds(3), brands=BRANDS_WITH_IDS)
+    res = search_products({"keyword": "a"}, client=c)
+    assert res["error"] == "keyword_too_short"
+    assert not [call for call in c.calls if call[0] in ("search", "category")]
+
+
+def test_a_one_letter_keyword_is_fine_with_a_category():
+    c = CatalogClient(by_category={"beds": beds(3)})
+    assert "error" not in search_products({"keyword": "a", "category_slug": "beds"}, client=c)

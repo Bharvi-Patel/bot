@@ -1,0 +1,12 @@
+10_page1                           POST /categories/kids-furniture-beds/products           status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+11_query_page2                     POST /categories/kids-furniture-beds/products?page=2    status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+12_query_page3                     POST /categories/kids-furniture-beds/products?page=3    status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+13_body_page2                      POST /categories/kids-furniture-beds/products           status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+14_body_page3                      POST /categories/kids-furniture-beds/products           status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+15_query_and_body_page2            POST /categories/kids-furniture-beds/products?page=2    status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+16_query_page2_nobody              POST /categories/kids-furniture-beds/products?page=2    status=200 total=84 page=1/6 first=darcie-daybed-with-trundle-and-storage
+17_brand_query_page2               POST /categories/kids-furniture-beds/products?page=2    status=200 total=74 page=2/5 first=romona-daybed-with-trundle-full
+20_search_empty_q                  POST /products/search                                   status=422 
+21_search_no_q                     POST /products/search                                   status=422 
+22_search_q_a                      POST /products/search                                   status=422 
+23_search_q_black                  POST /products/search                                   status=200 total=2110 page=1/132 first=carter-black-3pc-reclining-set-carter-3p | facets: brands=7 groups=['Bed Size', 'Color', 'Material', 'Pattern', 'Table Shape', 'Rug Size', 'Shape']

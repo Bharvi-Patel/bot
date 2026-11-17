@@ -1,0 +1,13 @@
+{
+ "request": {
+  "method": "POST",
+  "path": "/categories/kids-furniture-beds/products",
+  "body": {
+   "attribute_ids": [
+    "67ace390fcb040008ecdc568b52e13f2"
+   ]
+  }
+ },
+ "status": 200,
+ "response": "{\"success\":true,\"message\":\"Products fetched successfully.\",\"data\":{\"imagePath\":\"https:\\/\\/cdn.b3c2.com\\/cdn_folder\\/images\\/product\",\"product\":{\"current_page\":1,\"data\":[],\"first_page_url\":\"http:\\/\\/127.0.0.1:8001\\/categories\\/kids-furniture-beds\\/products?page=1\",\"from\":null,\"last_page\":1,\"last_page_url\":\"http:\\/\\/127.0.0.1:8001\\/categories\\/kids-furniture-beds\\/products?page=1\",\"links\":[{\"url\":null,\"label\":\"&laquo; Previous\",\"active\":false},{\"url\":\"http:\\/\\/127.0.0.1:8001\\/categories\\/kids-furniture-beds\\/products?page=1\",\"label\":\"1\",\"active\":true},{\"url\":null,\"label\":\"Next &raquo;\",\"active\":false}],\"next_page_url\":null,\"path\":\"http:\\/\\/127.0.0.1:8001\\/categories\\/kids-furniture-beds\\/products\",\"per_page\":16,\"prev_page_url\":null,\"to\":null,\"total\":0},\"breadcrumbs\":[{\"name\":\"Kids and Nursery\",\"slug\":\"kids-and-nursery\",\"uuid\":\"20972734796097538141479737138571\"},{\"name\":\"Kids Furniture\",\"slug\":\"kids-and-nursery-kids-furniture\",\"uuid\":\"08354249786959263812112578254562\"},{\"name\":\"Beds\",\"slug\":\"kids-furniture-beds\",\"uuid\":\"26802310482654585439931868904748\"}]}}"
+}

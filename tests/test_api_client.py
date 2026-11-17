@@ -147,7 +147,8 @@ def test_brands_flattened_from_vendors():
     assert t.requests[0].full_url == "http://127.0.0.1:8001/brands"
     assert [b["slug"] for b in brands] == ["coaster", "foa", "foa-exclusive", "acme", "crownmark", "emerald-home", "mda-rugs", "happy-home"]
     foa = next(b for b in brands if b["slug"] == "foa")
-    assert foa == {"slug": "foa", "name": "Furniture Of America", "vendor": "FOA", "status": 1}
+    assert foa == {"uuid": "24535729948324335664029000859186", "slug": "foa", "name": "Furniture Of America",
+                   "vendor": "FOA", "status": 1}
 
 
 def test_brands_duplicates_are_removed():
@@ -300,3 +301,76 @@ def test_base_url_must_be_http_or_https():
         with pytest.raises(ValueError):
             ApiConfig(base_url=bad, store_uuid="u")
     ApiConfig(base_url="https://api.example.com", store_uuid="u")
+
+
+# ---------- listing filters (formats confirmed against the real API, 16-17 Nov) ----------
+
+def test_brand_uuid_in_brand_list_is_the_one_the_search_facets_use():
+    """The brand_ids filter takes the same uuid the search response lists under filter.brands."""
+    brands = make(fixture("brands"))[0].brands()
+    facets = make(fixture("product_search"))[0].search_products("bed")["filters"]["brands"]
+    foa_uuid = next(b["uuid"] for b in brands if b["slug"] == "foa")
+    assert foa_uuid == "24535729948324335664029000859186" and "Furniture Of America" in facets
+
+
+def test_search_sends_brand_and_price_in_the_confirmed_format():
+    client, t = make(fixture("product_search"))
+    client.search_products("bed", brand_ids=["24535729948324335664029000859186"], price_from=100, price_to=900.5, per_page=40)
+    assert json.loads(t.requests[0].data) == {
+        "q": "bed", "brand_ids": ["24535729948324335664029000859186"],
+        "price_range": {"from": 100, "to": 900.5}, "per_page": 40}   # {"min","max"} is ignored by the API
+
+
+def test_search_without_filters_sends_only_q():
+    client, t = make(fixture("product_search"))
+    client.search_products("bed")
+    assert json.loads(t.requests[0].data) == {"q": "bed"}
+
+
+@pytest.mark.parametrize("text", ["", " ", "a", " b "])
+def test_search_text_under_two_characters_is_refused_without_a_request(text):
+    client, t = make()
+    with pytest.raises(ApiError) as err:
+        client.search_products(text)
+    assert err.value.status == 422 and t.requests == []   # the real API answers 422 "at least 2 characters"
+
+
+def test_search_trims_the_text_before_sending():
+    client, t = make(fixture("product_search"))
+    client.search_products("  bed ")
+    assert json.loads(t.requests[0].data) == {"q": "bed"}
+
+
+def test_unfiltered_category_request_carries_the_paging_workaround():
+    """Without any filter the API serves every page from one cached page 1; a price_range from 0 avoids that
+    and returned the same totals on two real categories."""
+    client, t = make(fixture("category_products"))
+    client.category_products("dining-room", page=2)
+    assert t.requests[0].full_url.endswith("/categories/dining-room/products?page=2")
+    assert json.loads(t.requests[0].data) == {"price_range": {"from": 0}}
+
+
+def test_category_request_with_a_price_limit_does_not_add_the_workaround():
+    client, t = make(fixture("category_products"))
+    client.category_products("dining-room", price_to=300)
+    assert json.loads(t.requests[0].data) == {"price_range": {"to": 300}}
+
+
+def test_category_request_with_brand_only_still_gets_the_workaround():
+    client, t = make(fixture("category_products"))
+    client.category_products("dining-room", brand_ids=["24535729948324335664029000859186"])
+    assert json.loads(t.requests[0].data) == {"brand_ids": ["24535729948324335664029000859186"], "price_range": {"from": 0}}
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"brand_ids": ["bad id"]}, {"brand_ids": "not-a-list"}, {"brand_ids": [5]},
+    {"price_from": -1}, {"price_to": "10"}, {"price_from": True}, {"price_to": float("nan")},
+    {"per_page": 0}, {"per_page": 41}, {"per_page": "16"},
+])
+def test_bad_filter_values_are_refused_before_any_request(kwargs):
+    client, t = make()
+    with pytest.raises(ValueError):
+        client.search_products("bed", **kwargs)
+    with pytest.raises(ValueError):
+        client.category_products("dining-room", **kwargs)
+    assert t.requests == []

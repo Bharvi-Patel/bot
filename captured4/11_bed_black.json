@@ -1,0 +1,14 @@
+{
+ "request": {
+  "method": "POST",
+  "path": "/products/search",
+  "body": {
+   "q": "bed",
+   "attribute_ids": [
+    "e78ef3ea108048a99cbfc9df3fc262a0"
+   ]
+  }
+ },
+ "status": 200,
+ "response": "{\"success\":true,\"message\":\"Search results.\",\"data\":{\"imagePath\":\"https:\\/\\/cdn.b3c2.com\\/cdn_folder\\/images\\/product\",\"product\":{\"current_page\":1,\"data\":[],\"first_page_url\":\"http:\\/\\/127.0.0.1:8001\\/products\\/search?page=1\",\"from\":null,\"last_page\":1,\"last_page_url\":\"http:\\/\\/127.0.0.1:8001\\/products\\/search?page=1\",\"links\":[{\"url\":null,\"label\":\"&laquo; Previous\",\"active\":false},{\"url\":\"http:\\/\\/127.0.0.1:8001\\/products\\/search?page=1\",\"label\":\"1\",\"active\":true},{\"url\":null,\"label\":\"Next &raquo;\",\"active\":false}],\"next_page_url\":null,\"path\":\"http:\\/\\/127.0.0.1:8001\\/products\\/search\",\"per_page\":16,\"prev_page_url\":null,\"to\":null,\"total\":0},\"filter\":{\"categories\":[],\"brands\":[],\"price_range\":{\"min\":0,\"max\":0},\"attributes\":[]}}}"
+}

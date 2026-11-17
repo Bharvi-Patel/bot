@@ -1,0 +1,9 @@
+{
+ "request": {
+  "method": "POST",
+  "path": "/products/search",
+  "body": {}
+ },
+ "status": 422,
+ "response": "{\"success\":false,\"message\":\"Validation error.\",\"response_code\":422,\"errors\":{\"q\":[\"The q field is required.\"]}}"
+}

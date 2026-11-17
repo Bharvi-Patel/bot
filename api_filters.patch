@@ -1,0 +1,368 @@
+diff --git a/bot/api_client.py b/bot/api_client.py
+index c58d085..c77c9a4 100644
+--- a/bot/api_client.py
++++ b/bot/api_client.py
+@@ -3,8 +3,9 @@
+ Every call sends the Store-UUID header (and the bot key, if one is configured). The bot never
+ touches a store database; the API decides which store's data it sees from the UUID.
+ 
+-Built against real responses saved in tests/fixtures/api/. Filters whose request format has not been
+-confirmed yet (brand, price, sort) are deliberately not implemented here.
++Built against real responses saved in tests/fixtures/api/. Listing filters sent so far (brand_ids, price_range,
++per_page) use formats confirmed against the real API. Sorting and attribute filters are deliberately not sent yet:
++price_low_high lists the -0.01 placeholder products first, and several attribute ids mean "any of".
+ """
+ from __future__ import annotations
+ 
+@@ -61,6 +62,35 @@ class ApiConfig:
+         )
+ 
+ 
++_FILTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
++
++
++def _filter_body(brand_ids: list[str] | None, price_from: float | None, price_to: float | None,
++                 per_page: int | None) -> dict[str, Any]:
++    """The filter part of a listing request, in the formats the real API accepted:
++    brand_ids as a list of brand uuids, price_range as {"from": n, "to": n} (the {"min","max"} form is ignored),
++    per_page as a number. Anything else is a bug in the caller, so it raises ValueError."""
++    body: dict[str, Any] = {}
++    if brand_ids:
++        if not isinstance(brand_ids, (list, tuple)) or not all(isinstance(b, str) and _FILTER_ID_RE.match(b) for b in brand_ids):
++            raise ValueError("brand_ids must be a list of brand uuids")
++        body["brand_ids"] = list(brand_ids)
++    price: dict[str, float] = {}
++    for key, value in (("from", price_from), ("to", price_to)):
++        if value is None:
++            continue
++        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or value < 0:
++            raise ValueError(f"price_{key} must be a number that is not negative")
++        price[key] = value
++    if price:
++        body["price_range"] = price
++    if per_page is not None:
++        if isinstance(per_page, bool) or not isinstance(per_page, int) or not 1 <= per_page <= 40:
++            raise ValueError("per_page must be a whole number from 1 to 40")  # 40 is the largest size tried on the real API
++        body["per_page"] = per_page
++    return body
++
++
+ # ---------- small helpers ----------
+ 
+ def to_number(value: Any) -> float | None:
+@@ -239,6 +269,7 @@ class ApiClient:
+                     continue
+                 seen.add(b.get("slug"))
+                 out.append({
++                    "uuid": b.get("uuid"),   # the id brand_ids filters on (same id the search facets list)
+                     "slug": b.get("slug"),
+                     "name": _first_language(b.get("brand_languages")).get("name"),
+                     "vendor": v.get("name"),
+@@ -246,11 +277,20 @@ class ApiClient:
+                 })
+         return out
+ 
+-    def search_products(self, query: str, page: int = 1) -> dict[str, Any]:
+-        """POST /products/search?page=N with {"q": query}. Only the "q" filter is confirmed so far;
+-        other filters (brand, category, price, sort) are not implemented until their request format is known."""
++    def search_products(self, query: str, page: int = 1, *, brand_ids: list[str] | None = None,
++                        price_from: float | None = None, price_to: float | None = None,
++                        per_page: int | None = None) -> dict[str, Any]:
++        """POST /products/search?page=N with {"q": query} plus the filters confirmed against the real API
++        (tests/fixtures/api and the captures of 16-17 Nov): brand_ids, price_range {"from","to"} and per_page.
++        The API requires q to be at least 2 characters (HTTP 422 otherwise), so that is checked here.
++        Sorting and attribute filters are NOT sent yet: price_low_high lists the -0.01 placeholder products first,
++        and several attribute ids mean "any of", so both need design work in the tool first."""
++        query = (query or "").strip()
++        if len(query) < 2:
++            raise ApiError("search text must be at least 2 characters", status=422)
+         params = {"page": page} if page and page > 1 else None
+-        payload = self._request("POST", "/products/search", params=params, body={"q": query})
++        body = {"q": query, **_filter_body(brand_ids, price_from, price_to, per_page)}
++        payload = self._request("POST", "/products/search", params=params, body=body)
+         data = payload.get("data") if isinstance(payload, dict) else None
+         paged = data.get("product") if isinstance(data, dict) else None
+         if not isinstance(paged, dict):
+@@ -288,11 +328,22 @@ class ApiClient:
+             "children": [self._category_node(c) for c in node.get("children") or [] if isinstance(c, dict)],
+         }
+ 
+-    def category_products(self, slug: str, page: int = 1) -> dict[str, Any]:
+-        """POST /categories/{slug}/products?page=N. 16 per page."""
++    def category_products(self, slug: str, page: int = 1, *, brand_ids: list[str] | None = None,
++                          price_from: float | None = None, price_to: float | None = None,
++                          per_page: int | None = None) -> dict[str, Any]:
++        """POST /categories/{slug}/products?page=N, 16 per page unless per_page is given.
++
++        PAGING WORKAROUND: the API caches an unfiltered category list for 24 hours under a key with no page number,
++        so every page of it comes back as page 1 (seen in the real API, 17 Nov; see its ProductController).
++        A request with any filter uses a cache key that includes the page. So an unfiltered request is sent with
++        price_range {"from": 0}, which leaves the results unchanged (same totals on two real categories) and makes
++        paging work. Remove this once the API's cache key includes the page."""
++        if price_from is None and price_to is None:
++            price_from = 0
+         params = {"page": page} if page and page > 1 else None
+         quoted = urllib.parse.quote(slug, safe="")
+-        payload = self._request("POST", f"/categories/{quoted}/products", params=params, body={})
++        payload = self._request("POST", f"/categories/{quoted}/products", params=params,
++                                body=_filter_body(brand_ids, price_from, price_to, per_page))
+         data = payload.get("data") if isinstance(payload, dict) else None
+         paged = data.get("product") if isinstance(data, dict) else None
+         if not isinstance(paged, dict):
+diff --git a/bot/tools/search_products.py b/bot/tools/search_products.py
+index fbcc11e..30d2f47 100644
+--- a/bot/tools/search_products.py
++++ b/bot/tools/search_products.py
+@@ -2,13 +2,15 @@
+ 
+ The model only chooses filter values; this tool decides which API calls to make.
+ 
+-What the store API is known to do (from saved real responses): keyword search with {"q": ...}, and a product
+-listing for one category. How brand, price range, sort and attributes are sent to the API is NOT known yet, so:
+-  - brand, price limits and price sorting are applied here, on the pages fetched (at most MAX_PAGES x 16 products);
+-  - when a request needs the whole match list (sorting by price) and there are more matches than that, the tool
+-    says so instead of answering from part of the list;
+-  - color, material, attribute and width filters cannot be applied at all, and the tool says that.
+-Once the API's filter format is known, these local steps can be replaced by API parameters.
++What the store API is known to do (from saved real responses and captures): keyword search with {"q": ...} (at least
++2 characters), and a product listing for one category. Brand (brand_ids, the brand's uuid) and price range
++(price_range {"from","to"}) are sent to the API, so the pages read are the matching ones; both are still re-checked here
++on what comes back. Not sent to the API yet:
++  - price sorting is done here, on the pages fetched (at most MAX_PAGES x 16 products); when a request needs the whole
++    match list and there are more matches than that, the tool says so instead of answering from part of the list.
++    (The API's own price_low_high order lists the -0.01 placeholder products first, so it cannot be used as is.)
++  - color, material, attribute and width filters cannot be applied, and the tool says that. Several attribute ids sent
++    together mean "any of" on the API, which needs handling before they are used.
+ """
+ from __future__ import annotations
+ 
+@@ -172,7 +174,8 @@ def _is_component(name: str) -> bool:
+     return any(p.search(name or "") for p in COMPONENT_NAME_PATTERNS)
+ 
+ 
+-def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bool, base_ok, price_ok) -> dict[str, Any]:
++def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bool, base_ok, price_ok,
++           api_filters: dict[str, Any] | None = None) -> dict[str, Any]:
+     """Page through the API. Returns the items that pass every filter ("kept"), the ones that pass every filter except
+     price ("base_kept"), how many products were checked, the API's total and whether every page was read. Stops early
+     once enough matches exist, unless the whole list is needed."""
+@@ -183,9 +186,9 @@ def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bo
+     while pages < MAX_PAGES:
+         pages += 1
+         if v["category_slug"]:
+-            res = client.category_products(v["category_slug"], page=pages)
++            res = client.category_products(v["category_slug"], page=pages, **(api_filters or {}))
+         else:
+-            res = client.search_products(query, page=pages)
++            res = client.search_products(query, page=pages, **(api_filters or {}))
+         total, last_page = res.get("total"), res.get("last_page") or 1
+         checked += len(res["products"])
+         for p in res["products"]:
+@@ -231,6 +234,9 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
+         query = keyword or brand_name
+         if not v["category_slug"] and not query:
+             return {"error": "give at least a keyword, a category_slug or a brand_slug"}
++        if not v["category_slug"] and len(query) < 2:   # the store's search rejects anything shorter than 2 characters
++            return {"error": "keyword_too_short",
++                    "note": "The search needs a keyword of at least 2 letters. Ask the customer what they are looking for."}
+ 
+         lo, hi, sort = v["min_price"], v["max_price"], v["sort"]
+         words = keyword.split()[:5] if (keyword and v["category_slug"]) else []   # a category listing has no keyword filter
+@@ -253,8 +259,19 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
+                 return not price_filtered and sort == "name"
+             return (lo is None or price >= lo) and (hi is None or price <= hi)
+ 
++        # The API narrows the list by brand and price, so the pages read are the matching ones. Both are re-checked
++        # below on what comes back. A brand without an id in the brand list is filtered here only, as before.
++        api_filters: dict[str, Any] = {}
++        brand_uuid = next((b.get("uuid") for b in brands if brand_slug and b.get("slug") == brand_slug), None)
++        if brand_uuid:
++            api_filters["brand_ids"] = [brand_uuid]
++        if lo is not None:
++            api_filters["price_from"] = lo
++        if hi is not None:
++            api_filters["price_to"] = hi
++
+         need_all = sort in ("price_asc", "price_desc")
+-        fetched = _fetch(client, v, query, need_all, base_filter, price_ok)
++        fetched = _fetch(client, v, query, need_all, base_filter, price_ok, api_filters)
+         window = None
+         if need_all and not fetched["complete"]:
+             return {
+diff --git a/tests/api_fakes.py b/tests/api_fakes.py
+index 41616f7..ccef1ee 100644
+--- a/tests/api_fakes.py
++++ b/tests/api_fakes.py
+@@ -34,6 +34,7 @@ class CatalogClient:
+         self._brands = brands if brands is not None else []
+         self._tree = tree or []
+         self.calls = []
++        self.filters = []   # the API filters each search/category call was given, in call order
+ 
+     def brands(self):
+         self.calls.append(("brands",))
+@@ -48,14 +49,16 @@ class CatalogClient:
+         chunk = items[(page - 1) * self.PER_PAGE: page * self.PER_PAGE]
+         return {"page": page, "last_page": last, "per_page": self.PER_PAGE, "total": len(items), "products": chunk}
+ 
+-    def search_products(self, query, page=1):
++    def search_products(self, query, page=1, **filters):
+         self.calls.append(("search", query, page))
++        self.filters.append(filters)
+         words = query.lower().split()
+         hits = [p for p in self.products if all(w in p["name"].lower() or w in (p.get("brand") or "").lower() for w in words)]
+         return self._page(hits, page)
+ 
+-    def category_products(self, slug, page=1):
++    def category_products(self, slug, page=1, **filters):
+         self.calls.append(("category", slug, page))
++        self.filters.append(filters)
+         from bot.api_client import ApiError
+         if slug not in self.by_category:
+             raise ApiError("No query results", status=404)
+diff --git a/tests/test_api_client.py b/tests/test_api_client.py
+index dd718ca..e4a0d20 100644
+--- a/tests/test_api_client.py
++++ b/tests/test_api_client.py
+@@ -147,7 +147,8 @@ def test_brands_flattened_from_vendors():
+     assert t.requests[0].full_url == "http://127.0.0.1:8001/brands"
+     assert [b["slug"] for b in brands] == ["coaster", "foa", "foa-exclusive", "acme", "crownmark", "emerald-home", "mda-rugs", "happy-home"]
+     foa = next(b for b in brands if b["slug"] == "foa")
+-    assert foa == {"slug": "foa", "name": "Furniture Of America", "vendor": "FOA", "status": 1}
++    assert foa == {"uuid": "24535729948324335664029000859186", "slug": "foa", "name": "Furniture Of America",
++                   "vendor": "FOA", "status": 1}
+ 
+ 
+ def test_brands_duplicates_are_removed():
+@@ -300,3 +301,76 @@ def test_base_url_must_be_http_or_https():
+         with pytest.raises(ValueError):
+             ApiConfig(base_url=bad, store_uuid="u")
+     ApiConfig(base_url="https://api.example.com", store_uuid="u")
++
++
++# ---------- listing filters (formats confirmed against the real API, 16-17 Nov) ----------
++
++def test_brand_uuid_in_brand_list_is_the_one_the_search_facets_use():
++    """The brand_ids filter takes the same uuid the search response lists under filter.brands."""
++    brands = make(fixture("brands"))[0].brands()
++    facets = make(fixture("product_search"))[0].search_products("bed")["filters"]["brands"]
++    foa_uuid = next(b["uuid"] for b in brands if b["slug"] == "foa")
++    assert foa_uuid == "24535729948324335664029000859186" and "Furniture Of America" in facets
++
++
++def test_search_sends_brand_and_price_in_the_confirmed_format():
++    client, t = make(fixture("product_search"))
++    client.search_products("bed", brand_ids=["24535729948324335664029000859186"], price_from=100, price_to=900.5, per_page=40)
++    assert json.loads(t.requests[0].data) == {
++        "q": "bed", "brand_ids": ["24535729948324335664029000859186"],
++        "price_range": {"from": 100, "to": 900.5}, "per_page": 40}   # {"min","max"} is ignored by the API
++
++
++def test_search_without_filters_sends_only_q():
++    client, t = make(fixture("product_search"))
++    client.search_products("bed")
++    assert json.loads(t.requests[0].data) == {"q": "bed"}
++
++
++@pytest.mark.parametrize("text", ["", " ", "a", " b "])
++def test_search_text_under_two_characters_is_refused_without_a_request(text):
++    client, t = make()
++    with pytest.raises(ApiError) as err:
++        client.search_products(text)
++    assert err.value.status == 422 and t.requests == []   # the real API answers 422 "at least 2 characters"
++
++
++def test_search_trims_the_text_before_sending():
++    client, t = make(fixture("product_search"))
++    client.search_products("  bed ")
++    assert json.loads(t.requests[0].data) == {"q": "bed"}
++
++
++def test_unfiltered_category_request_carries_the_paging_workaround():
++    """Without any filter the API serves every page from one cached page 1; a price_range from 0 avoids that
++    and returned the same totals on two real categories."""
++    client, t = make(fixture("category_products"))
++    client.category_products("dining-room", page=2)
++    assert t.requests[0].full_url.endswith("/categories/dining-room/products?page=2")
++    assert json.loads(t.requests[0].data) == {"price_range": {"from": 0}}
++
++
++def test_category_request_with_a_price_limit_does_not_add_the_workaround():
++    client, t = make(fixture("category_products"))
++    client.category_products("dining-room", price_to=300)
++    assert json.loads(t.requests[0].data) == {"price_range": {"to": 300}}
++
++
++def test_category_request_with_brand_only_still_gets_the_workaround():
++    client, t = make(fixture("category_products"))
++    client.category_products("dining-room", brand_ids=["24535729948324335664029000859186"])
++    assert json.loads(t.requests[0].data) == {"brand_ids": ["24535729948324335664029000859186"], "price_range": {"from": 0}}
++
++
++@pytest.mark.parametrize("kwargs", [
++    {"brand_ids": ["bad id"]}, {"brand_ids": "not-a-list"}, {"brand_ids": [5]},
++    {"price_from": -1}, {"price_to": "10"}, {"price_from": True}, {"price_to": float("nan")},
++    {"per_page": 0}, {"per_page": 41}, {"per_page": "16"},
++])
++def test_bad_filter_values_are_refused_before_any_request(kwargs):
++    client, t = make()
++    with pytest.raises(ValueError):
++        client.search_products("bed", **kwargs)
++    with pytest.raises(ValueError):
++        client.category_products("dining-room", **kwargs)
++    assert t.requests == []
+diff --git a/tests/test_search_products.py b/tests/test_search_products.py
+index 17e12f5..3feca87 100644
+--- a/tests/test_search_products.py
++++ b/tests/test_search_products.py
+@@ -348,3 +348,50 @@ def test_real_category_listing_with_a_price_limit():
+ def test_real_unknown_category_404():
+     out = search_products({"category_slug": "nope"}, client=real_client())
+     assert out["error"] == "unknown_category"
++
++
++# ---------- filters handed to the API ----------
++BRANDS_WITH_IDS = [{"uuid": "u-acme", "slug": "acme", "name": "Acme", "vendor": "V", "status": 1},
++                   {"uuid": None, "slug": "coaster", "name": "Coaster", "vendor": "V", "status": 1}]
++
++
++def test_brand_and_price_limits_are_sent_to_the_api_on_a_search():
++    c = CatalogClient(beds(3), brands=BRANDS_WITH_IDS)
++    search_products({"keyword": "bed", "brand_slug": "acme", "min_price": 50, "max_price": 500}, client=c)
++    assert c.filters == [{"brand_ids": ["u-acme"], "price_from": 50.0, "price_to": 500.0}]
++
++
++def test_brand_and_price_limits_are_sent_to_the_api_on_a_category_listing():
++    c = CatalogClient(by_category={"beds": beds(3)}, brands=BRANDS_WITH_IDS)
++    search_products({"category_slug": "beds", "brand_slug": "acme", "max_price": 500}, client=c)
++    assert c.filters == [{"brand_ids": ["u-acme"], "price_to": 500.0}]
++
++
++def test_no_filters_are_sent_when_none_were_asked_for():
++    c = CatalogClient(beds(3), brands=BRANDS_WITH_IDS)
++    search_products({"keyword": "bed"}, client=c)
++    assert c.filters == [{}]
++
++
++def test_brand_without_an_id_is_filtered_by_the_tool_only():
++    c = CatalogClient([item("C1", "Coaster Bed", 100, "Coaster"), item("A1", "Acme Bed", 100, "Acme")], brands=BRANDS_WITH_IDS)
++    res = search_products({"keyword": "bed", "brand_slug": "coaster"}, client=c)
++    assert c.filters == [{}] and [p["sku"] for p in res["products"]] == ["C1"]
++
++
++def test_price_limits_are_still_checked_on_what_the_api_returns():
++    c = CatalogClient([item("A", "Bed A", 40), item("B", "Bed B", 400), item("C", "Bed C", 900)], brands=BRANDS_WITH_IDS)
++    res = search_products({"keyword": "bed", "min_price": 50, "max_price": 500}, client=c)
++    assert [p["sku"] for p in res["products"]] == ["B"]
++
++
++def test_a_one_letter_keyword_is_refused_without_searching():
++    c = CatalogClient(beds(3), brands=BRANDS_WITH_IDS)
++    res = search_products({"keyword": "a"}, client=c)
++    assert res["error"] == "keyword_too_short"
++    assert not [call for call in c.calls if call[0] in ("search", "category")]
++
++
++def test_a_one_letter_keyword_is_fine_with_a_category():
++    c = CatalogClient(by_category={"beds": beds(3)})
++    assert "error" not in search_products({"keyword": "a", "category_slug": "beds"}, client=c)
