@@ -36,20 +36,6 @@ def test_symbol_only_keyword_means_no_filter():
     assert len(ship({"zone_keyword": " - "})["zones"]) == 2
 
 
-# ---------- "Will a sofa fit on an 80 inch wall?" answered "no sofas in the catalog" ----------
-def test_empty_width_search_does_not_claim_the_catalog_has_none():
-    def db(sql, params=()):
-        return [{"n": 40}] if "COUNT(DISTINCT" in sql else []
-    out = search_products({"keyword": "sofa", "max_width_in": 80}, run_query=db)
-    assert out["count"] == 0 and out["without_size_data"] == 40
-    assert "Do NOT say the catalog has no such products" in out["note"] and "size_note" in out
-
-
-def test_empty_search_without_width_keeps_the_plain_note():
-    out = search_products({"keyword": "zzz"}, run_query=lambda *_: [])
-    assert out["note"].startswith("No products matched") and "Do NOT" not in out["note"]
-
-
 # ---------- phone numbers inside policy pages are not the store's phone numbers ----------
 PAGE = {"results": [{"title": "Financing", "text": "Visit our Brooklyn showroom or call (718) 384-8413 or mail old@other-store.com"}]}
 STORE = '{"phone": "(731) 423-6565", "email": "shop@store.com"}'
@@ -105,11 +91,11 @@ OPTIONS_REPLY = "Here are sofas under $1,000: Clearbrooke Sofa, $455.83.\n/produ
 
 
 def test_search_result_lists_the_price_limits_it_used():
-    def db(sql, params=()):
-        return [{"n": 0}] if "COUNT(DISTINCT" in sql else [dict(r) for r in SOFA_ROWS]
-    out = search_products({"keyword": "sofa", "max_price": 1000}, run_query=db)
+    from tests.api_fakes import CatalogClient, item
+    client = CatalogClient([item("S1", "Clearbrooke Sofa", 455.83, "Acme", "clearbrooke-sofa-s1")], brands=[{"slug": "acme", "name": "Acme"}])
+    out = search_products({"keyword": "sofa", "max_price": 1000}, client=client)
     assert out["applied_filters"] == {"max_price": 1000}
-    assert "applied_filters" not in search_products({"keyword": "sofa"}, run_query=db)
+    assert "applied_filters" not in search_products({"keyword": "sofa"}, client=client)
     assert g.check_reply(OPTIONS_REPLY, [out], "yeah show me other options", "{}") == (True, None)
 
 
@@ -122,7 +108,7 @@ def test_figures_the_customer_typed_in_earlier_turns_may_be_repeated(monkeypatch
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", "{}")
     out = {"count": 1, "products": [dict(SOFA_ROWS[0])]}
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: out)
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: out)
     history = [{"role": "user", "text": "I have about $1,000 to spend"}, {"role": "assistant", "text": "Great, what room is it for?"}]
     llm = FakeLLM(LLMTurn(tool_calls=[ToolCall("search_products", {"keyword": "sofa"})]), LLMTurn(text=OPTIONS_REPLY))
     assert router.answer("living room", llm, history)["blocked"] is None
@@ -134,29 +120,6 @@ def test_prompt_handles_other_options_and_why_questions():
 
 
 # ---------- "show beds under $500" found nothing: the keyword was the plural 'beds' and names say 'Bed' ----------
-from bot.tools.search_products import _stem, build_search_query
-
-
-@pytest.mark.parametrize("word,stem", [("beds", "bed"), ("Sofas", "sofa"), ("loveseats", "love" + "seat"), ("mattresses", "mattress"),
-                                       ("nightstands", "nightstand"), ("accessories", "accessory"), ("glass", "glass"),
-                                       ("bed", "bed"), ("bus", "bus"), ("rugs", "rug"), ("tv", "tv")])
-def test_plural_keywords_are_reduced_to_the_singular(word, stem):
-    assert _stem(word) == stem
-
-
-def test_keyword_search_uses_the_singular_form():
-    _, params = build_search_query({"keyword": "beds", "max_price": 500})
-    assert "%bed%" in params and "%beds%" not in params
-
-
-def test_empty_keyword_search_tells_the_model_to_try_the_category_before_giving_up():
-    out = search_products({"keyword": "bed", "max_price": 500}, run_query=lambda *_: [])
-    assert out["count"] == 0 and "list_categories" in out["note"] and "category_slug" in out["note"]
-    real_category = lambda sql, params=(): [{"slug": "bedroom-furniture-beds"}] if sql.startswith("SELECT slug FROM vw_chat_categories") else []
-    plain = search_products({"category_slug": "bedroom-furniture-beds"}, run_query=real_category)
-    assert "list_categories" not in plain["note"]
-
-
 def test_prompt_says_to_try_the_category_before_saying_none():
     assert "singular keyword" in g.SYSTEM_PROMPT and "before saying we have none" in g.SYSTEM_PROMPT
 
@@ -208,56 +171,47 @@ def test_prompt_keeps_greetings_short_and_contacts_on_request():
 
 
 # ---------- "sofas under $250": the model searched category_slug 'sofas', which does not exist, and got "no products" ----------
-def db_with_categories(known, close=()):
-    def db(sql, params=()):
-        if sql.startswith("SELECT slug FROM vw_chat_categories WHERE slug = %s"):
-            return [{"slug": params[0]}] if params[0] in known else []
-        if sql.startswith("SELECT slug, title FROM vw_chat_categories"):
-            return [dict(r) for r in close]
-        return []                                            # no products either way
-    return db
+def sofa_catalog(known=(), close_rows=()):
+    from tests.api_fakes import CatalogClient, TreeClient
+    return CatalogClient(by_category={k: [] for k in known}, tree=TreeClient(close_rows).categories())
 
 
 def test_an_invented_category_slug_is_an_error_with_suggestions_not_an_empty_result():
-    close = [{"slug": "living-room-sofas", "title": "Sofas"}]
-    out = search_products({"category_slug": "sofas", "max_price": 400}, run_query=db_with_categories({"living-room-sofas"}, close))
+    close = [{"category_id": 1, "parent_id": 0, "slug": "living-room-sofas", "title": "Sofas"}]
+    out = search_products({"category_slug": "sofas", "max_price": 400}, client=sofa_catalog({"living-room-sofas"}, close))
     assert out["error"] == "unknown_category" and "'sofas'" in out["note"] and "list_categories" in out["note"]
     assert out["did_you_mean"] == [{"slug": "living-room-sofas", "title": "Sofas"}] and "products" not in out
 
 
 def test_a_real_category_with_no_matches_is_still_a_plain_empty_result():
-    out = search_products({"category_slug": "living-room-sofas", "max_price": 50}, run_query=db_with_categories({"living-room-sofas"}))
+    out = search_products({"category_slug": "living-room-sofas", "max_price": 50}, client=sofa_catalog({"living-room-sofas"}))
     assert out["count"] == 0 and "error" not in out and out["note"].startswith("No products matched")
 
 
 def test_results_are_never_second_guessed_when_products_were_found():
-    calls = []
-    def db(sql, params=()):
-        calls.append(sql)
-        return [{"n": 0}] if "COUNT(DISTINCT" in sql else [dict(SOFA_ROWS[0])]
-    out = search_products({"category_slug": "whatever", "max_price": 500}, run_query=db)
-    assert out["count"] == 1 and not any(c.startswith("SELECT slug FROM vw_chat_categories") for c in calls)
+    from tests.api_fakes import CatalogClient, item
+    c = CatalogClient(by_category={"whatever": [item("S1", "Clearbrooke Sofa", 455.83)]})
+    out = search_products({"category_slug": "whatever", "max_price": 500}, client=c)
+    assert out["count"] == 1 and not any(call[0] == "categories" for call in c.calls)
 
 
 def test_prompt_forbids_guessing_slugs():
     assert "never guess or shorten a slug" in g.SYSTEM_PROMPT
 
 # ---------- "cheapest?" after a capped, name-sorted list; "other options" after an empty result ----------
-def test_truncated_name_sorted_list_warns_not_to_call_anything_cheapest():
-    rows = [dict(SOFA_ROWS[0], sku=f"S{i}") for i in range(8)]
-    out = search_products({"keyword": "sofa", "max_price": 1000}, run_query=lambda sql, params=(): [dict(r) for r in rows])
-    assert out["sorted_by"] == "name" and "NOT sorted by price" in out["note"] and "sort=price_asc" in out["note"]
-    cheap = search_products({"keyword": "sofa", "sort": "price_asc"}, run_query=lambda sql, params=(): [dict(r) for r in rows])
+def test_truncated_store_order_list_warns_not_to_call_anything_cheapest():
+    from tests.api_fakes import CatalogClient, item
+    c = CatalogClient([item(f"S{i}", f"Sofa {i}", 455.83) for i in range(9)], brands=[])
+    out = search_products({"keyword": "sofa", "max_price": 1000}, client=c)
+    assert out["sorted_by"].startswith("store order") and "NOT sorted by price" in out["note"] and "sort=price_asc" in out["note"]
+    cheap = search_products({"keyword": "sofa", "sort": "price_asc"}, client=c)
     assert "first one is the cheapest" in cheap["note"]
 
 
 def test_empty_result_under_a_limit_returns_the_real_nearest_products():
-    calls = []
-
-    def db(sql, params=()):
-        calls.append(params)
-        return [] if 100.0 in params else [dict(r) for r in SOFA_ROWS]
-    out = search_products({"keyword": "sofa", "max_price": 100}, run_query=db)
+    from tests.api_fakes import CatalogClient, item
+    c = CatalogClient([item("S1", "Clearbrooke Sofa", 455.83, "Acme", "clearbrooke-sofa-s1")], brands=[])
+    out = search_products({"keyword": "sofa", "max_price": 100}, client=c)
     assert out["count"] == 0 and out["cheapest_over_limit"][0]["price"] == 455.83
     assert "Never invent" in out["note"]
     assert g.check_reply("Nothing under $100, but the Clearbrooke Sofa is $455.83.", [out], "show me sofas under $100", "{}") == (True, None)

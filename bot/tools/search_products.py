@@ -1,69 +1,65 @@
-"""search_products: filter the catalog with a fixed, parameterized query on the vw_chat_* views.
+"""search_products: find products through the store API (POST /products/search and POST /categories/{slug}/products).
 
-The model only chooses filter values. It never writes SQL. Everything user-controlled goes into
-`params`; the only text built into the SQL comes from constants in this file.
+The model only chooses filter values; this tool decides which API calls to make.
 
-Parents and variants are both searched (colors and sizes often live on variant rows), then results
-are collapsed to ONE row per product family: the cheapest matching option, plus how many options match.
+What the store API is known to do (from saved real responses): keyword search with {"q": ...}, and a product
+listing for one category. How brand, price range, sort and attributes are sent to the API is NOT known yet, so:
+  - brand, price limits and price sorting are applied here, on the pages fetched (at most MAX_PAGES x 16 products);
+  - when a request needs the whole match list (sorting by price) and there are more matches than that, the tool
+    says so instead of answering from part of the list;
+  - color, material, attribute and width filters cannot be applied at all, and the tool says that.
+Once the API's filter format is known, these local steps can be replaced by API parameters.
 """
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
 
-from bot.config import full_image_url
+from bot.api_client import ApiClient, ApiError, get_client
+from bot.tools.list_categories import rows_from_tree
 
-MAX_RESULTS = 8  # hard cap, not a parameter
+MAX_RESULTS = 8   # hard cap, not a parameter
+MAX_PAGES = 5     # API pages (16 products each) fetched for one search
 
-# Sort choices map to fixed SQL fragments. Unknown values are rejected, never pasted in.
-# These run on the collapsed result, so they use plain column names (no table alias).
+# Sort choices the model may send. "name" is the store's own order: the API's order is not known to be by name.
 SORTS = {
-    "name": "name ASC",
-    "price_asc": "price ASC, name ASC",
-    "price_desc": "price DESC, name ASC",
+    "name": "store order",
+    "price_asc": "cheapest first",
+    "price_desc": "most expensive first",
 }
 
-# One product family = the parent and all its variants. A product with no parent is its own family.
-FAMILY = "COALESCE(NULLIF(p.parent_uuid, ''), p.product_uuid)"
-SIZE_GROUP = "Bed Size"          # variants carry their size here; the category ("Queen") sits on the parent family only
-SIZE_TITLES = ("Twin", "Twin XL", "Full", "Full XL", "Queen", "King", "California King", "Cal King")
-_SIZE_TITLES_SQL = ", ".join(f"'{t}'" for t in SIZE_TITLES)     # fixed constants from this file, never user input
-
-# Parts are sold only as pieces of a bigger item ("Base, Box 2 of 2", "Back, Black", "Metal Post/Box 2 of 2") and were listed to
-# customers as if they were products (a "Queen Decking Board Set" as the cheapest bed). They stay out of results unless the
-# customer's search is explicitly for that category. Set HIDE_COMPONENT_SKUS = False to switch the filter off.
+# Parts are sold only as pieces of a bigger item ("Base, Box 2 of 2") and were once listed to customers as if they were
+# products (a "Queen Decking Board Set" as the cheapest bed). They stay out of results unless the customer's search is
+# explicitly for that category. Add a pattern when a new part shows up as "the cheapest <item>".
 HIDE_COMPONENT_SKUS = True
 COMPONENT_CATEGORY = "component-skus"
-COMPONENT_NAME_LIKE = "%%Box _ of _%%"          # "Box 2 of 2": _ is any one character, so boxes 1 to 9
-# More parts found by diagnose_retest.py (2026-10-23), filed as products but sold only as a piece of something else. Each is a
-# NOT LIKE pattern on the product name (%% is a literal % here). Add a line when a new part shows up as "the cheapest <item>".
-COMPONENT_NAME_LIKES = (
-    COMPONENT_NAME_LIKE,
-    "%%Decking Board%%",      # "Queen Decking Board Set" was offered as the cheapest queen bed
-    "%% Dresser Top%%",       # "Akerson Dresser Top Grey": the top piece of a mirrored dresser set, not a dresser
-    "%% Table Top",           # names that END in "Table Top" ("Bar Table Top"): a loose top, not a table
-)
+COMPONENT_NAME_PATTERNS = [re.compile(p, re.I) for p in (
+    r"Box . of .",        # "Base, Box 2 of 2"
+    r"Decking Board",     # "Queen Decking Board Set"
+    r" Dresser Top",      # "Akerson Dresser Top Grey": the top piece of a mirrored dresser set
+    r" Table Top$",       # names that END in "Table Top": a loose top, not a table
+)]
 
 ALLOWED_KEYS = {
     "keyword", "category_slug", "brand_slug", "min_price", "max_price",
     "color", "material", "attribute_group", "attribute_value", "max_width_in", "sort",
 }
 
-# Attribute groups that exist in the catalog (SELECT DISTINCT group_name FROM vw_chat_product_attributes).
+# Attribute groups that exist in the catalog (from the old database snapshot; also used by list_attribute_values).
 ATTRIBUTE_GROUPS = [
     "Bar Features", "Bed Size", "Color", "Frame Size", "Item Type", "Leaf Type", "Material",
     "Pattern", "Rug Size", "Shape", "Table Base", "Table Shape", "Table Top",
 ]
-COLOR_GROUP = "Color"
-MATERIAL_GROUP = "Material"
+
+# Filters the store API cannot be asked for yet (format unknown), keyed by the argument the model sends.
+UNSUPPORTED = {
+    "color": "color", "material": "material", "attribute_group": "attribute filters",
+    "attribute_value": "attribute filters", "max_width_in": "size or width limits",
+}
 
 
 class ToolInputError(ValueError):
     """The model sent parameters this tool won't accept."""
-
-
-def _like_escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _number(args: dict, key: str) -> float | None:
@@ -94,39 +90,30 @@ def _prepare(args: dict[str, Any]) -> dict[str, Any]:
     unknown = set(args) - ALLOWED_KEYS
     if unknown:
         raise ToolInputError(f"unknown parameter(s): {', '.join(sorted(unknown))}")
-
     vals: dict[str, Any] = {
         "keyword": _text(args, "keyword"),
         "category_slug": _text(args, "category_slug"),
         "brand_slug": _text(args, "brand_slug"),
-        "color": _text(args, "color"),
-        "material": _text(args, "material"),
         "min_price": _number(args, "min_price"),
         "max_price": _number(args, "max_price"),
-        "max_width": _number(args, "max_width_in"),
         "sort": args.get("sort") or "name",
     }
-
     group, value = _text(args, "attribute_group"), _text(args, "attribute_value")
     if bool(group) != bool(value):
         raise ToolInputError("attribute_group and attribute_value must be given together")
-    if group:
-        match = next((g for g in ATTRIBUTE_GROUPS if g.lower() == group.lower()), None)
-        if match is None:
-            raise ToolInputError(f"attribute_group must be one of: {', '.join(ATTRIBUTE_GROUPS)}")
-        group = match
-    vals["attribute_group"], vals["attribute_value"] = group, value
-
+    if group and not any(g.lower() == group.lower() for g in ATTRIBUTE_GROUPS):
+        raise ToolInputError(f"attribute_group must be one of: {', '.join(ATTRIBUTE_GROUPS)}")
     if vals["sort"] not in SORTS:
         raise ToolInputError(f"sort must be one of: {', '.join(SORTS)}")
     lo, hi = vals["min_price"], vals["max_price"]
     if lo is not None and hi is not None and lo > hi:
         raise ToolInputError("min_price is greater than max_price")
+    vals["unsupported"] = sorted({UNSUPPORTED[k] for k in UNSUPPORTED if args.get(k) not in (None, "")} )
     return vals
 
 
 def _stem(word: str) -> str:
-    """'beds' -> 'bed', 'sofas' -> 'sofa', 'mattresses' -> 'mattress': product names are mostly singular, and LIKE is exact."""
+    """'beds' -> 'bed', 'sofas' -> 'sofa', 'mattresses' -> 'mattress': product names are mostly singular."""
     w = word.lower()
     if len(w) > 4 and w.endswith("ies"):
         return w[:-3] + "y"
@@ -137,284 +124,221 @@ def _stem(word: str) -> str:
     return w
 
 
-def _clauses(v: dict[str, Any], width_mode: str) -> tuple[list[str], list[Any], list[str], list[Any]]:
-    """Build (ctes, cte_params, where, params).
-
-    width_mode: "filter"  -> only products with a real width up to max_width_in
-                "missing" -> only products with no width on file (used to tell the model what was skipped)
-                "none"    -> ignore width
-    """
-    ctes: list[str] = []
-    cte_params: list[Any] = []
-    where: list[str] = []
-    params: list[Any] = []
-
-    if v["category_slug"]:
-        # The category plus everything below it. parent_id is the parent's integer category_id.
-        ctes.append(
-            "sub AS (\n"
-            "  SELECT category_id, category_uuid, 1 AS is_root FROM vw_chat_categories WHERE slug = %s\n"
-            "  UNION ALL\n"
-            "  SELECT c.category_id, c.category_uuid, 0 FROM vw_chat_categories c\n"
-            "  JOIN sub ON c.parent_id = sub.category_id\n"
-            ")"
-        )
-        cte_params.append(v["category_slug"])
-        # Computed once (not per product row), so the search stays fast.
-        ctes.append(
-            "cat_products AS (\n"
-            "  SELECT DISTINCT pc.product_uuid FROM vw_chat_product_categories pc\n"
-            "  JOIN sub ON sub.category_uuid = pc.category_uuid\n"
-            ")"
-        )
-        # The chosen category's own title, only when it is a size word ("Queen"): a size category then matches only that size's
-        # variants. A broad category (Mattresses and Bedding) or one with other kinds of children applies no size filter.
-        ctes.append(
-            "cat_titles AS (\n"
-            "  SELECT DISTINCT c.title FROM vw_chat_categories c JOIN sub ON sub.category_uuid = c.category_uuid AND sub.is_root = 1\n"
-            f"  WHERE c.title IN ({_SIZE_TITLES_SQL})\n"
-            ")"
-        )
-
-                # Families filed under any of the size categories next to the chosen one (Twin, Full, Queen ... under the same parent). A
-        # family is often filed under only ONE size while its variants come in several (eval 2026-10-19: the $143 "Queen Mattress"
-        # sits on a family filed as Twin), so the Queen category alone misses them.
-        ctes.append(
-            "size_sibs AS (\n"
-            "  SELECT DISTINCT pc.product_uuid FROM vw_chat_product_categories pc\n"
-            "  JOIN vw_chat_categories sc ON sc.category_uuid = pc.category_uuid\n"
-            f"  WHERE sc.title IN ({_SIZE_TITLES_SQL}) AND sc.parent_id IN (\n"
-            "    SELECT c.parent_id FROM vw_chat_categories c JOIN sub ON sub.category_uuid = c.category_uuid AND sub.is_root = 1\n"
-            f"    WHERE c.title IN ({_SIZE_TITLES_SQL}))\n"
-            ")"
-        )
-
-
-        # A row matches if it is in the category, or its parent is (variants may not be linked directly). The parent's
-        # category lists every size it comes in, so a variant that records a different size (Twin in a Queen category)
-        # is left out; variants with no size on file keep matching through the parent as before.
-        where.append(
-            "(p.product_uuid IN (SELECT product_uuid FROM cat_products) "
-            "OR (p.parent_uuid IN (SELECT product_uuid FROM cat_products) "
-            "AND NOT EXISTS (SELECT 1 FROM vw_chat_product_attributes sz "
-            f"WHERE sz.product_uuid = p.product_uuid AND sz.group_name = '{SIZE_GROUP}' "
-            "AND EXISTS (SELECT 1 FROM cat_titles) AND sz.value NOT IN (SELECT title FROM cat_titles))) "
-            # a variant whose OWN recorded size is the chosen size counts even when its family is filed under another size
-            "OR (p.parent_uuid IN (SELECT product_uuid FROM size_sibs) "
-            "AND EXISTS (SELECT 1 FROM vw_chat_product_attributes sz2 "
-            f"WHERE sz2.product_uuid = p.product_uuid AND sz2.group_name = '{SIZE_GROUP}' "
-            "AND sz2.value IN (SELECT title FROM cat_titles))))"
-        )
-
-    if v["keyword"]:
-        for word in v["keyword"].split()[:5]:
-            where.append("CONCAT_WS(' ', p.name, par.name) LIKE %s")
-            params.append(f"%{_like_escape(_stem(word))}%")
-    if v["brand_slug"]:
-        where.append("COALESCE(p.brand_slug, par.brand_slug) = %s")
-        params.append(v["brand_slug"])
-    if HIDE_COMPONENT_SKUS and v["category_slug"] != COMPONENT_CATEGORY:
-        # constants from this file, pasted in (not user input); %% is a literal % because the query also has %s placeholders
-        for pattern in COMPONENT_NAME_LIKES:
-            where.append(f"p.name NOT LIKE '{pattern}'")
-        where.append("NOT EXISTS (SELECT 1 FROM vw_chat_product_categories cpc JOIN vw_chat_categories cc "
-                     f"ON cc.category_uuid = cpc.category_uuid WHERE cpc.product_uuid = p.product_uuid AND cc.slug = '{COMPONENT_CATEGORY}')")
-    if v["min_price"] is not None:
-        where.append("p.price >= %s")
-        params.append(v["min_price"])
-    if v["max_price"] is not None:
-        where.append("p.price <= %s")
-        params.append(v["max_price"])
-
-    if v["max_width"] is not None:
-        if width_mode == "filter":
-            where.append("p.width > 0 AND p.width <= %s")
-            params.append(v["max_width"])
-        elif width_mode == "missing":
-            where.append("(p.width IS NULL OR p.width = 0)")
-
-    attr_sql = (
-        "p.product_uuid IN (SELECT a.product_uuid FROM vw_chat_product_attributes a "
-        "WHERE a.group_name = %s AND a.value = %s)"
-    )
-    if v["color"]:
-        where.append(attr_sql)
-        params.extend([COLOR_GROUP, v["color"]])
-    if v["material"]:
-        where.append(
-            "p.product_uuid IN (SELECT a.product_uuid FROM vw_chat_product_attributes a "
-            "WHERE a.group_name = %s AND a.value LIKE %s)"
-        )
-        params.extend([MATERIAL_GROUP, f"%{_like_escape(v['material'])}%"])
-    if v["attribute_group"]:
-        where.append(attr_sql)
-        params.extend([v["attribute_group"], v["attribute_value"]])
-
-    # The products table is used twice (the row and its parent); a CTE builds it once.
-    ctes.append("base AS (SELECT * FROM vw_chat_product_search)")
-    return ctes, cte_params, where, params
-
-
-def _with(ctes: list[str]) -> str:
-    return "WITH RECURSIVE " + ",\n".join(ctes) + "\n"
-
-
-def build_search_query(args: dict[str, Any]) -> tuple[str, list[Any]]:
-    """Validate args and return (sql, params). Pure function: no database needed, easy to unit test."""
-    v = _prepare(args)
-    ctes, cte_params, where, params = _clauses(v, "filter" if v["max_width"] is not None else "none")
-    sql = (
-        _with(ctes)
-        + "SELECT sku, slug, name, price, brand_name, width, height, depth, main_image, matching_options\n"
-        + "FROM (\n"
-        + "  SELECT p.sku, p.slug, p.name, p.price,\n"
-        + "         COALESCE(p.brand_name, par.brand_name) AS brand_name,\n"
-        + "         p.width, p.height, p.depth,\n"
-        + "         COALESCE(p.main_image, par.main_image) AS main_image,\n"
-        + f"         COUNT(*) OVER (PARTITION BY {FAMILY}) AS matching_options,\n"
-        + f"         ROW_NUMBER() OVER (PARTITION BY {FAMILY} ORDER BY p.price ASC, p.sku ASC) AS rn\n"
-        + "  FROM base p\n"
-        + "  LEFT JOIN base par ON par.product_uuid = p.parent_uuid\n"
-        + ("  WHERE " + "\n    AND ".join(where) + "\n" if where else "")
-        + ") x\n"
-        + "WHERE rn = 1\n"
-        + f"ORDER BY {SORTS[v['sort']]}\n"
-        + f"LIMIT {MAX_RESULTS}"
-    )
-    return sql, cte_params + params
-
-
-def build_missing_size_query(args: dict[str, Any]) -> tuple[str, list[Any]] | None:
-    """Count families that match every filter except size AND have no width on file.
-    None when no width filter was used."""
-    v = _prepare(args)
-    if v["max_width"] is None:
-        return None
-    ctes, cte_params, where, params = _clauses(v, "missing")
-    sql = (
-        _with(ctes)
-        + f"SELECT COUNT(DISTINCT {FAMILY}) AS n\n"
-        + "FROM base p\n"
-        + "LEFT JOIN base par ON par.product_uuid = p.parent_uuid\n"
-        + "WHERE " + "\n  AND ".join(where)
-    )
-    return sql, cte_params + params
-
-
-def _unknown_category(slug: str, run_query: Callable) -> dict[str, Any] | None:
-    """None when the slug is a real category. Otherwise an error the model can act on, with the closest real categories."""
-    if run_query("SELECT slug FROM vw_chat_categories WHERE slug = %s LIMIT 1", [slug]):
-        return None
-    like = f"%{_like_escape(_stem(slug.replace('-', ' ').split()[-1] if slug.strip('-') else slug))}%"
-    close = run_query("SELECT slug, title FROM vw_chat_categories WHERE slug LIKE %s OR title LIKE %s "
-                      "ORDER BY CHAR_LENGTH(slug) LIMIT 5", [like, like])
-    return {
-        "error": "unknown_category",
-        "note": (f"No category has the slug '{slug}'. Never guess a category_slug: call list_categories with a keyword "
-                 "(for example 'sofa') to get a real slug, then search again with the same price limit."),
-        "did_you_mean": [{"slug": r["slug"], "title": r["title"]} for r in close],
-    }
-
-
 def _squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text.lower())
 
 
-def _brand_from_keyword(args: dict[str, Any], run_query: Callable) -> dict[str, Any]:
-    """The model often sends a brand as a text keyword ("acme", "coaster"). A keyword only matches words in product NAMES, so the
-    search finds nothing and the customer is told the store does not carry the brand (eval 2026-10-15: 23 Acme beds exist).
-    If the keyword is exactly a brand the store carries and no brand_slug was given, search by that brand instead."""
+def _brand_from_keyword(args: dict[str, Any], brands: list[dict[str, Any]]) -> dict[str, Any]:
+    """The model often sends a brand as a text keyword ("acme", "coaster"). A keyword only matches words in product
+    NAMES, so the search finds nothing and the customer is told the store does not carry the brand. If the keyword is
+    exactly a brand the store carries and no brand_slug was given, search by that brand instead."""
     kw = args.get("keyword")
     if not isinstance(kw, str) or args.get("brand_slug") or not _squash(kw) or len(kw.split()) > 4:
         return args
     want = _squash(kw)
-    try:
-        brands = run_query("SELECT brand_slug, brand_name FROM vw_chat_brands WHERE active_products > 0")
-    except Exception:                                        # a failed brand lookup must never break the search itself
-        return args
-    for b in brands if isinstance(brands, list) else []:
-        slug = b.get("brand_slug") if isinstance(b, dict) else None
-        if slug and want in {_squash(str(slug)), _squash(str(b.get("brand_name") or ""))}:
+    for b in brands:
+        slug = b.get("slug")
+        if slug and want in {_squash(str(slug)), _squash(str(b.get("name") or ""))}:
             return {**{k: v for k, v in args.items() if k != "keyword"}, "brand_slug": slug}
     return args
 
 
-def search_products(args: dict[str, Any], run_query: Callable | None = None) -> dict[str, Any]:
-    """Tool entry point. Returns a JSON-friendly dict for the model."""
-    if run_query is None:
-        from bot.db import run_query as default_run_query
-        run_query = default_run_query
-    args = _brand_from_keyword(args, run_query)
+def _unknown_category(slug: str, client: ApiClient) -> dict[str, Any]:
+    """An error the model can act on, with the closest real categories (best effort)."""
+    close: list[dict[str, str]] = []
     try:
-        sql, params = build_search_query(args)
-        missing = build_missing_size_query(args)
+        words = [w for w in re.split(r"[-\s]+", slug) if w]
+        stem = _stem(words[-1]) if words else slug
+        rows = rows_from_tree(client.categories())
+        close = [{"slug": r["slug"], "title": r["title"]} for r in rows
+                 if stem and (stem in str(r["slug"]).lower() or stem in str(r["title"]).lower())]
+        close = sorted(close, key=lambda r: len(r["slug"]))[:5]
+    except ApiError:
+        pass
+    return {
+        "error": "unknown_category",
+        "note": (f"No category has the slug '{slug}'. Never guess a category_slug: call list_categories with a keyword "
+                 "(for example 'sofa') to get a real slug, then search again with the same price limit."),
+        "did_you_mean": close,
+    }
+
+
+def _passes_keyword(name: str, words: list[str]) -> bool:
+    low = (name or "").lower()
+    return all(_stem(w) in low for w in words)
+
+
+def _is_component(name: str) -> bool:
+    return any(p.search(name or "") for p in COMPONENT_NAME_PATTERNS)
+
+
+def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bool, base_ok, price_ok) -> dict[str, Any]:
+    """Page through the API. Returns the items that pass every filter ("kept"), the ones that pass every filter except
+    price ("base_kept"), how many products were checked, the API's total and whether every page was read. Stops early
+    once enough matches exist, unless the whole list is needed."""
+    kept: list[dict[str, Any]] = []
+    base_kept: list[dict[str, Any]] = []
+    varies = 0   # matching products whose price depends on an option (size...), so no single price to compare
+    checked, total, pages, last_page = 0, None, 0, None
+    while pages < MAX_PAGES:
+        pages += 1
+        if v["category_slug"]:
+            res = client.category_products(v["category_slug"], page=pages)
+        else:
+            res = client.search_products(query, page=pages)
+        total, last_page = res.get("total"), res.get("last_page") or 1
+        checked += len(res["products"])
+        for p in res["products"]:
+            if base_ok(p):
+                base_kept.append(p)
+                if p.get("price_varies") and p.get("price") is None:
+                    varies += 1
+                if price_ok(p):
+                    kept.append(p)
+        if pages >= last_page or (not need_all and len(kept) >= MAX_RESULTS):
+            break
+    complete = last_page is not None and pages >= last_page
+    return {"kept": kept, "base_kept": base_kept, "varies": varies, "checked": checked, "total": total, "complete": complete}
+
+
+def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
+    """Tool entry point. Returns a JSON-friendly dict for the model."""
+    try:
+        v = _prepare(args)
     except ToolInputError as exc:
         return {"error": str(exc)}
+    if v["unsupported"]:
+        what = " and ".join(v["unsupported"])
+        return {"error": "unsupported_filter",
+                "note": (f"The store's search cannot filter by {what} right now. Search again without it, and tell the "
+                         f"customer the results are not filtered by {what}. Never say a product matches {what} unless its "
+                         "name says so.")}
 
-    rows = run_query(sql, params)
-    for row in rows:
-        row["main_image"] = full_image_url(row.get("main_image"))
-    result: dict[str, Any] = {"count": len(rows), "products": rows}
+    try:
+        client = client or get_client(ctx)
+        # The brand list is only needed to turn a brand slug into a name, or to spot a brand typed as a keyword.
+        brands = client.brands() if (args.get("brand_slug") or args.get("keyword")) else []
+        args = _brand_from_keyword(args, brands)
+        brand_slug = _text(args, "brand_slug")
+        keyword = _text(args, "keyword")
+        brand_name = None
+        if brand_slug:
+            brand_name = next((b["name"] for b in brands if b.get("slug") == brand_slug and b.get("name")), None)
+            if brand_name is None:
+                return {"error": "unknown_brand",
+                        "note": f"No brand has the slug '{brand_slug}'. Call list_brands to get a real slug."}
+
+        query = keyword or brand_name
+        if not v["category_slug"] and not query:
+            return {"error": "give at least a keyword, a category_slug or a brand_slug"}
+
+        lo, hi, sort = v["min_price"], v["max_price"], v["sort"]
+        words = keyword.split()[:5] if (keyword and v["category_slug"]) else []   # a category listing has no keyword filter
+        hide_parts = HIDE_COMPONENT_SKUS and v["category_slug"] != COMPONENT_CATEGORY
+        wanted_brand = _squash(brand_name) if brand_name else None
+        price_filtered = lo is not None or hi is not None
+
+        def base_filter(p: dict[str, Any]) -> bool:        # everything except price
+            if hide_parts and _is_component(p.get("name") or ""):
+                return False
+            if words and not _passes_keyword(p.get("name") or "", words):
+                return False
+            if wanted_brand and _squash(p.get("brand") or "") != wanted_brand:
+                return False
+            return True
+
+        def price_ok(p: dict[str, Any]) -> bool:
+            price = p.get("price")
+            if price is None:
+                return not price_filtered and sort == "name"
+            return (lo is None or price >= lo) and (hi is None or price <= hi)
+
+        need_all = sort in ("price_asc", "price_desc")
+        fetched = _fetch(client, v, query, need_all, base_filter, price_ok)
+        window = None
+        if need_all and not fetched["complete"]:
+            return {
+                "error": "too_many_matches",
+                "note": (f"This search matches about {fetched['total']} products, too many to sort by price exactly. Do not "
+                         "name a cheapest or most expensive one. Search again with a keyword for the product type together "
+                         "with the most specific category_slug, so the list is short enough."),
+            }
+        if not fetched["complete"]:
+            window = {"checked": fetched["checked"], "of": fetched["total"]}
+        rows = fetched["kept"]
+    except ApiError as exc:
+        if exc.status == 404 and v["category_slug"]:
+            try:
+                return _unknown_category(v["category_slug"], client)  # type: ignore[arg-type]
+            except Exception:
+                pass
+        return {"error": "Product search is not available right now. Do not guess products or prices; offer the store's contact details."}
+
+    if sort == "price_asc":
+        rows = sorted(rows, key=lambda p: p["price"])
+    elif sort == "price_desc":
+        rows = sorted(rows, key=lambda p: -p["price"])
+    shown = rows[:MAX_RESULTS]
+    products = [{"sku": p.get("sku"), "slug": p.get("slug"), "name": p.get("name"), "price": p.get("price"),
+                 "brand_name": p.get("brand"), "main_image": p.get("image_url"),
+                 **({"price_varies": True} if p.get("price_varies") else {})} for p in shown]
+
+    result: dict[str, Any] = {"count": len(products), "products": products}
     applied = {k: args[k] for k in ("min_price", "max_price") if args.get(k) is not None}
     if applied:
         result["applied_filters"] = applied                  # the price limits actually used, so the reply may state them
-    sort_used = args.get("sort") or "name"
-    result["sorted_by"] = sort_used
-    if sort_used in ("price_asc", "price_desc") and not args.get("keyword") and rows:
+    result["sorted_by"] = "store order (not by name or price)" if sort == "name" else sort
+    if window:
+        result["searched"] = window
+        result["partial_note"] = (f"Only the first {window['checked']} of {window['of']} matching products were checked. "
+                                  "Do NOT say these are all the matches, and do not say there are none beyond them.")
+    if any(p.get("price_varies") for p in products):
+        result["price_note"] = ("A product with price_varies true has a price that depends on its option (for example the size); "
+                                "its price is null here. Do not state a price for it. Call get_product_details with its slug to "
+                                "see the price of each option.")
+    elif any(p["price"] is None for p in products):
+        result["price_note"] = "A product with price null has no price available. Do not state or guess its price."
+    if fetched["varies"] and (price_filtered or need_all):
+        result["price_varies_skipped"] = fetched["varies"]
+        result["price_varies_note"] = (f"{fetched['varies']} matching product(s) (for example mattresses) have prices that depend on the "
+                                       "size or option, so they could not be checked against the price limit or sorted by price. "
+                                       "Say so, and do not claim the list includes every product in that price range.")
+    if sort in ("price_asc", "price_desc") and not keyword and products:
         result["type_check"] = ("Parts and accessories can be filed in a category (drawer sets, board sets). Before naming the first "
                                 "result as the cheapest or priciest of a type, check that its name says that type; if it does not, search "
                                 "again with keyword set to the type word.")
-    if len(rows) == MAX_RESULTS:
-        result["note"] = (f"Showing only the first {MAX_RESULTS} matches, sorted by {sort_used}; there are probably more, so do NOT "
-                          f"say these are all of them; suggest narrowing the filters. ")
-        if sort_used == "price_asc":
-            result["note"] += "They are the cheapest matches, so the first one is the cheapest."
-        else:
+    if len(rows) > MAX_RESULTS:
+        result["note"] = (f"Showing only the first {MAX_RESULTS} matches; there are more, so do NOT say these are all of them; "
+                          "suggest narrowing the filters. ")
+        if sort == "name":
             result["note"] += ("This list is NOT sorted by price, so never call any of these the cheapest or priciest. "
                                "For 'cheapest' / 'most expensive' search again with the same filters and sort=price_asc / price_desc.")
-    if not rows and args.get("category_slug"):
-        unknown = _unknown_category(str(args["category_slug"]).strip(), run_query)
-        if unknown:
-            return unknown                                   # a made-up slug looks like "no products"; say it is a bad slug instead
-    if not rows:
-        result["note"] = "No products matched. Suggest loosening a filter (price, size or color)."
-        if args.get("brand_slug") and args.get("category_slug"):
+        else:
+            result["note"] += ("These are the cheapest matches, so the first one is the cheapest." if sort == "price_asc"
+                               else "These are the most expensive matches, so the first one is the most expensive.")
+    if not products:
+        result["note"] = "No products matched. Suggest loosening a filter (price or keyword)."
+        if window:
+            result["note"] = ("None of the products checked matched, but not all matches were checked. Do NOT say the store has none; "
+                              "suggest a more specific keyword or category.")
+        if args.get("brand_slug") and v["category_slug"]:
             result["note"] += (" The category may simply be too narrow: before saying the store does not carry this brand, "
                                "search again with only brand_slug (and the same price limit).")
-        if args.get("category_slug") and not args.get("keyword"):
+        if v["category_slug"] and not keyword:
             result["note"] += (" The category may hold only parts, or the items may be filed under another category: before saying we have "
                                "none, search again with keyword set to the product word (for example stool or armoire), the same price "
                                "limit, and no category_slug.")
-        if args.get("keyword") and not args.get("category_slug"):
+        if keyword and not v["category_slug"]:
             result["note"] += (" Before saying we have none, look up the type with list_categories and search its category_slug "
                                "(with the same price limit); a keyword only matches words in product names.")
-        if args.get("max_width_in") is not None:
-            result["note"] = ("No product with a width on file fits that size limit. Do NOT say the catalog has no such products: "
-                              "say that none of the ones with a listed width fit, mention any without size data (see size_note), "
-                              "and suggest a larger limit or confirming sizes with the store.")
-
-    if not rows and applied.get("max_price") is not None and args.get("max_width_in") is None:
-        # Nothing under the limit: look up what really exists just above it, so the reply quotes real products and
-        # prices instead of the model guessing a higher limit.
-        try:
-            near_sql, near_params = build_search_query({**{k: v for k, v in args.items() if k != "max_price"}, "sort": "price_asc"})
-            near = run_query(near_sql, near_params)[:3]
-        except ToolInputError:
-            near = []
-        for row in near:
-            row["main_image"] = full_image_url(row.get("main_image"))
-        if near:
-            result["cheapest_over_limit"] = near
-            result["note"] = ("Nothing matched at or under that price. Say so, then in the SAME reply list the products in "
-                              "cheapest_over_limit (name and real price) as the closest options; do not just ask whether the "
-                              "customer wants to see them. Never invent a new price limit.")
-
-    if missing is not None:
-        n = int(run_query(*missing)[0]["n"])
-        result["without_size_data"] = n
-        if n:
-            result["size_note"] = (
-                f"{n} other matching product(s) have no width on file, so they could not be checked "
-                "against the size limit. Say so, and suggest confirming the size with the store."
-            )
+        if hi is not None and fetched["complete"]:
+            near = sorted((p for p in fetched["base_kept"] if p.get("price") is not None and p["price"] > hi),
+                          key=lambda p: p["price"])[:3]
+            if near:
+                result["cheapest_over_limit"] = [{"sku": p.get("sku"), "slug": p.get("slug"), "name": p.get("name"),
+                                                  "price": p.get("price"), "brand_name": p.get("brand"),
+                                                  "main_image": p.get("image_url")} for p in near]
+                result["note"] = ("Nothing matched at or under that price. Say so, then in the SAME reply list the products in "
+                                  "cheapest_over_limit (name and real price) as the closest options; do not just ask whether the "
+                                  "customer wants to see them. Never invent a new price limit.")
     return result

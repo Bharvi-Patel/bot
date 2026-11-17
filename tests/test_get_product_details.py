@@ -77,7 +77,7 @@ class Resp:
         return False
 
 
-def api(detail_fixture="product_detail", cdn_folder="south-jackson", tree=True):
+def api(detail_fixture="product_detail", cdn_folder="south-jackson", tree=True, search_fixture="product_search"):
     """A client whose transport serves saved real responses by URL. Returns (client, requested_urls)."""
     urls = []
 
@@ -87,7 +87,7 @@ def api(detail_fixture="product_detail", cdn_folder="south-jackson", tree=True):
         if path.startswith("/product/"):
             return Resp((FIX / f"{detail_fixture}.json").read_bytes())
         if path == "/products/search":
-            return Resp((FIX / "product_search.json").read_bytes())
+            return Resp((FIX / f"{search_fixture}.json").read_bytes())
         if path == "/categories/tree":
             if not tree:
                 raise ApiError("down")
@@ -186,3 +186,19 @@ def test_unsafe_slug_is_quoted_in_the_path():
     client, urls = api()
     get_product_details({"slug": "a/b?c"}, client=client)
     assert urls[0] == "http://x/product/a%2Fb%3Fc"
+
+
+def test_option_priced_product_lists_each_size_with_its_price():
+    out = get_product_details({"slug": "royal"}, client=api("product_detail_variable")[0])
+    p = out["product"]
+    assert p["price"] is None and out["price_range"] == {"min": 339.99, "max": 659.99} and out["option_count"] == 4
+    assert [(o["attributes"]["Bed Size"], o["price"]) for o in out["options"]] == [("Twin", 339.99), ("Full", 439.99), ("Queen", 479.99), ("King", 659.99)]
+    assert "depends on the option" in out["note"] and "Never give a price for an option that is not listed" in out["note"]
+    assert "No price is available" not in out["note"]
+    assert "base_price" not in json.dumps(out) and "169.0" not in json.dumps(out)
+
+
+def test_sku_search_finds_the_exact_sku_even_with_other_matches_listed():
+    client, urls = api(search_fixture="sku_search")
+    out = get_product_details({"sku": "2261brn-s"}, client=client)
+    assert out["found"] is True and urls[1] == "http://x/product/blanche-side-chair-brown-2261brn-s"

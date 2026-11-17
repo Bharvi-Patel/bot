@@ -28,32 +28,7 @@ def fake_query(log=None, brands=BRANDS):
     return run
 
 
-# ---------------- brand as keyword ----------------
-def test_a_keyword_that_is_exactly_a_brand_becomes_a_brand_filter():
-    # real call from the log: keyword "acme" in the bed category with max_price 400
-    args = {"category_slug": "bedroom-furniture-beds", "max_price": 400, "keyword": "acme"}
-    assert sp._brand_from_keyword(args, fake_query()) == {"category_slug": "bedroom-furniture-beds", "max_price": 400, "brand_slug": "acme"}
-    assert sp._brand_from_keyword({"keyword": "Coaster", "max_price": 300}, fake_query()) == {"max_price": 300, "brand_slug": "coaster"}
-    assert sp._brand_from_keyword({"keyword": "signature design by ashley"}, fake_query()) == {"brand_slug": "signature-design-by-ashley"}
-
-
-def test_everything_else_is_left_alone():
-    q = fake_query()
-    assert sp._brand_from_keyword({"keyword": "sofa"}, q) == {"keyword": "sofa"}                 # not a brand
-    assert sp._brand_from_keyword({"keyword": "acme bed"}, q) == {"keyword": "acme bed"}         # only an exact brand name counts
-    assert sp._brand_from_keyword({"keyword": "acme", "brand_slug": "coaster"}, q) == {"keyword": "acme", "brand_slug": "coaster"}
-    assert sp._brand_from_keyword({"category_slug": "x"}, q) == {"category_slug": "x"}
-
-    def boom(sql, params=None):
-        raise RuntimeError("db down")
-    assert sp._brand_from_keyword({"keyword": "acme"}, boom) == {"keyword": "acme"}              # a failed lookup never breaks the search
-
-
-def test_the_product_query_uses_the_brand_not_a_name_search():
-    seen: list = []
-    sp.search_products({"keyword": "acme", "category_slug": "bedroom-furniture-beds", "max_price": 400}, run_query=fake_query(seen))
-    sql, params = seen[0]
-    assert "acme" in params and not any(isinstance(p, str) and p.startswith("%acme") for p in params)
+# brand-as-keyword tests now live in tests/test_search_products.py (the brand list comes from the store API).
 
 
 # ---------------- invented budget ----------------
@@ -94,14 +69,14 @@ def test_both_repairs_work_together():
 
 def test_a_reply_with_one_invented_price_is_still_blocked_after_the_repairs(monkeypatch):
     monkeypatch.setattr(router, "known_brands", lambda: [])
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"products": [{"name": "Susie", "price": 63.8}]})
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Susie", "price": 63.8}]})
     out = router.answer(ASKED, FakeLLM(call("search_products", sort="price_asc"), say("Tables for under $70: Susie $63.80 and Bob $12")))
     assert out["reply"] == g.FALLBACK and out["blocked"] == "unverified_price"      # Bob's $12 is not real: nothing is sent
 
 
 def test_router_sends_the_cleaned_reply_not_the_fallback(monkeypatch):
     monkeypatch.setattr(router, "known_brands", lambda: [])
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"products": [{"name": "Susie", "price": 63.8}]})
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Susie", "price": 63.8}]})
     out = router.answer(ASKED, FakeLLM(call("search_products", sort="price_asc"), say(REPLY)))
     assert out["blocked"] is None and "$70" not in out["reply"] and "$63.80" in out["reply"]
 
@@ -139,7 +114,7 @@ def test_the_longest_brand_name_wins_and_other_words_do_not_match():
 def test_router_searches_the_brand_not_the_invented_category(monkeypatch):
     seen = []
     monkeypatch.setattr(router, "known_brands", lambda: KNOWN)
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: (seen.append(a), {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})[1])
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: (seen.append(a), {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})[1])
     out = router.answer(COASTER_Q, FakeLLM(call("search_products", category_slug="sofas-and-seating-sofas", brand_slug="coaster", max_price=300),
                                           say("We have the Jacotte Bar Stool from Coaster for $176.")))
     assert seen == [{"brand_slug": "coaster", "max_price": 300}] and out["blocked"] is None
@@ -147,7 +122,7 @@ def test_router_searches_the_brand_not_the_invented_category(monkeypatch):
 
 def test_a_brand_only_question_tells_the_model_not_to_pick_a_product_type_for_the_customer(monkeypatch):
     monkeypatch.setattr(router, "known_brands", lambda: KNOWN)
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})
     llm = FakeLLM(call("search_products", category_slug="sofas-and-seating-sofas", brand_slug="coaster", max_price=300),
                   say("We have the Jacotte Bar Stool from Coaster for $176."))
     router.answer(COASTER_Q, llm)

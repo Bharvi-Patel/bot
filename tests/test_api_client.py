@@ -244,6 +244,38 @@ def test_image_url_is_none_without_cdn_folder():
     assert d["images"] == []  # placeholder not replaced, so no broken link
 
 
+# ---------- products whose price depends on an option (real mattress responses) ----------
+
+def test_variable_product_detail_exposes_per_size_prices_and_no_base_price():
+    client, _ = make(fixture("product_detail_variable"), cdn_folder="south-jackson")
+    d = client.product_detail("royal-ultra-plush-12-hybrid-happyhomep2529parent")
+    assert d["price"] is None and d["price_varies"] is True  # the product's own sale_price is -0.01
+    assert [(o["attributes"], o["price"]) for o in d["options"]] == [
+        ({"Bed Size": "Twin"}, 339.99), ({"Bed Size": "Full"}, 439.99), ({"Bed Size": "Queen"}, 479.99), ({"Bed Size": "King"}, 659.99)]
+    assert set(d["options"][0]) == {"sku", "slug", "price", "attributes"}
+    assert "base_price" not in json.dumps(d) and "169.00" not in json.dumps(d)
+
+
+def test_plain_product_has_no_options_and_does_not_vary():
+    client, _ = make(fixture("product_detail"))
+    d = client.product_detail("blanche-side-chair-brown-2261brn-s")
+    assert d["options"] == [] and d["price_varies"] is False
+
+
+def test_search_listing_marks_option_priced_products():
+    client, _ = make(fixture("product_search"))
+    items = client.search_products("bed")["products"]
+    varies = [p for p in items if p["price_varies"]]
+    assert len(varies) == 7 and all(p["price"] is None for p in varies)  # all seven -0.01 products are option-priced
+    assert not any(p["price_varies"] for p in items if p["price"] is not None)
+
+
+def test_searching_for_a_sku_finds_that_product():
+    client, _ = make(fixture("sku_search"))
+    res = client.search_products("2261BRN-S")
+    assert [p["sku"] for p in res["products"]] == ["2261BRN-S", "2261BRN-5P-Set"] and res["total"] == 2
+
+
 # ---------- helpers ----------
 
 def test_to_number():

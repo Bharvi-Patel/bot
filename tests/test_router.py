@@ -219,7 +219,7 @@ def test_hours_nudge_only_matches_hours_questions():
 def test_misspelt_product_sent_to_the_policy_search_is_retried_in_the_catalog(monkeypatch):
     monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.65, "chunks": []})
     monkeypatch.setitem(g.TOOLS, "list_categories", lambda a, ctx=None: {"categories": [{"slug": "recliners", "title": "Recliners"}]})
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"count": 1, "products": [{"sku": "R1", "name": "Rocker Recliner", "price": 299.0}]})
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"count": 1, "products": [{"sku": "R1", "name": "Rocker Recliner", "price": 299.0}]})
     llm = FakeLLM(call("search_policies", question="cheep reclyners"), say("I don't have information about that."),
                   call("search_products", keyword="recliner", sort="price_asc"), say("The cheapest is the Rocker Recliner at $299.00."))
     out = router.answer("cheep reclyners pls", llm)
@@ -260,7 +260,7 @@ def test_prompt_has_the_new_search_and_hours_rules():
 
 def test_cheapest_answer_from_a_search_without_a_type_word_is_retried_with_a_keyword(monkeypatch):
     seen = []
-    def fake_search(a):
+    def fake_search(a, ctx=None):
         seen.append(dict(a))
         name, price = ("Dresser Mirror Set", 150.0) if a.get("keyword") else ("Drawers (2Pcs), Black", 79.2)
         return {"count": 1, "products": [{"sku": "X", "name": name, "price": price}], "sorted_by": "price_asc"}

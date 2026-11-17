@@ -316,6 +316,9 @@ class ApiClient:
             "name": lang.get("name"),
             "brand": _first_language(brand.get("brand_languages")).get("name"),
             "price": to_price(p.get("sale_price")),  # base_price is deliberately not passed on
+            # product_type 1 is a product whose price depends on an option such as size: in the saved real data every
+            # one has sale_price -0.01 on the product itself, with the real prices on its options (see product_detail).
+            "price_varies": p.get("product_type") == 1,
             "image_url": self.image_url(image_base, p.get("main_image")),
             "tags": lang.get("tags") or "",
         }
@@ -341,6 +344,20 @@ class ApiClient:
 
         base = data.get("imagePath")
         images = [self.image_url(base, i.get("image_url")) for i in p.get("product_images") or [] if isinstance(i, dict)]
+
+        # Options (sizes, colors...) of a product whose price depends on them. groupedAttributes lists each option
+        # value as {"id": "<attribute uuid>:<variation uuid>", "title": ...} under its group, which says which
+        # variation each value belongs to. Only sku, slug, sale price and those values are kept: the raw variations
+        # also carry base_price and other internal fields.
+        values: dict[str, dict[str, str]] = {}
+        for g in data.get("groupedAttributes") or []:
+            for a in (g.get("attributes") or []) if isinstance(g, dict) else []:
+                if isinstance(a, dict) and ":" in str(a.get("id", "")) and a.get("title"):
+                    values.setdefault(str(a["id"]).split(":")[-1], {})[str(g.get("group"))] = a["title"]
+        options = [
+            {"sku": v.get("sku"), "slug": v.get("slug"), "price": to_price(v.get("sale_price")), "attributes": values.get(str(v.get("uuid")), {})}
+            for v in p.get("variations") or [] if isinstance(v, dict)
+        ]
         return {
             "slug": p.get("slug"),
             "sku": p.get("sku"),
@@ -357,6 +374,8 @@ class ApiClient:
             "pieces": p.get("pieces"),
             "lifestyle": p.get("lifestyle"),
             "is_variant": p.get("parent_id") is not None,
+            "price_varies": p.get("product_type") == 1,
+            "options": options,
             "categories": categories,
             # attributes, colors, sizes, variations and promotions are deliberately NOT returned: no saved
             # response has any yet, so their shape is unknown and they may carry base_price or other internal

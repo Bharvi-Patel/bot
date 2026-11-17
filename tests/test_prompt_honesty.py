@@ -182,7 +182,7 @@ def test_router_makes_the_model_search_again_before_answering_cheapest_from_memo
             seen.append(list(messages))
             return self.turns.pop(0)
 
-    monkeypatch.setitem(g.TOOLS, "search_products", lambda a: {"products": [{"name": "Greenbriar Sofa", "price": 215.0}]})
+    monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Greenbriar Sofa", "price": 215.0}]})
     history = [{"role": "user", "text": "show me sofas under $1000"},
                {"role": "assistant", "text": "110 LATTE - $798.00, 110 Black - $998.00"}]
     out = router.answer("which one is the cheapest?", LLM(), history)
