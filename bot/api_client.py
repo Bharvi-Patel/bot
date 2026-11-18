@@ -258,6 +258,27 @@ class ApiClient:
             })
         return out
 
+    def faqs(self) -> list[dict[str, Any]]:
+        """GET /faqs/global: faqs[] -> faq_languages[] (question, answer as HTML). One row per FAQ in the store's
+        first listed language. The product links inside each FAQ are dropped: the answers are store-wide text.
+        The response has no status or deleted flag, so whether the endpoint already hides disabled FAQs is not
+        confirmed; nothing is filtered here."""
+        payload = self._request("GET", "/faqs/global")
+        faqs = payload.get("faqs") if isinstance(payload, dict) else None
+        if not isinstance(faqs, list):
+            raise ApiError("unexpected /faqs/global response shape")
+        out = []
+        for f in faqs:
+            if not isinstance(f, dict):
+                continue
+            lang = _first_language(f.get("faq_languages"))
+            question, answer = lang.get("question"), lang.get("answer")
+            if not f.get("slug") or not question or not answer:
+                continue
+            out.append({"slug": f["slug"], "question": strip_html(question), "answer_html": answer,
+                        "sort_order": f.get("sort_order")})
+        return out
+
     def brands(self) -> list[dict[str, Any]]:
         """GET /brands: vendors[] -> brands[] -> brand_languages[]. Flattened to one row per brand.
         The response has no product counts, so the bot cannot say how many products a brand has from this call."""

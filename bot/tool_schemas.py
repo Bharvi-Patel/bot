@@ -86,10 +86,9 @@ TOOL_DECLARATIONS: list[dict] = [
     ),
     _tool(
         "get_shipping_options",
-        "Shipping methods and flat prices per zone, including in-store pickup. Use for ANY question about shipping cost "
-        "or where the store ships; call it with no parameters to see every zone. The listed zones are the only places the store ships to. "
+        "What the store's own shipping and pickup text says. Use for ANY question about shipping cost, where the store ships, or pickup; call it with no parameters. It has no rate table: give a price or a shipping area only if the text states it. "
         "Cannot give delivery dates.",
-        {"zone_keyword": {**_STR, "description": "Optional filter on a zone or method name, e.g. 'USA' or 'pickup'. Leave it out to see everything."}},
+        {"zone_keyword": {**_STR, "description": "Optional place or method to look for, e.g. 'Canada' or 'pickup'. Leave it out for the general shipping text."}},
     ),
     _tool("get_store_info", "Store phone, email, address and opening hours. Takes no parameters."),
     _tool(

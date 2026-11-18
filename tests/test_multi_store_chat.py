@@ -166,3 +166,22 @@ def test_a_failed_brand_lookup_returns_nothing_and_is_not_cached(monkeypatch):
 def test_the_rendered_prompt_is_reused_for_the_same_settings():
     cfg = StoreConfig(store_uuid="a-1", store_name="Alpha")
     assert render_system_prompt(cfg) is render_system_prompt(cfg)
+
+
+def test_known_brands_without_a_store_use_the_env_store_or_return_nothing(monkeypatch):
+    class FakeClient:
+        def brands(self):
+            return [{"slug": "dev-brand", "name": "Dev Brand"}]
+    monkeypatch.setattr(router, "_BRANDS_BY_STORE", {})
+    monkeypatch.setattr(api_client, "get_client", lambda ctx=None: FakeClient())
+    monkeypatch.delenv("BOT_STORE_UUID", raising=False)
+    assert router.known_brands() == []                                   # no store at all: nothing, and no database
+    monkeypatch.setenv("BOT_STORE_UUID", "dev-1")
+    assert router.known_brands() == [{"slug": "dev-brand", "name": "Dev Brand"}]
+
+
+def test_the_bot_package_no_longer_reads_the_storefront_database_for_brands_or_shipping():
+    import pathlib
+    for name in ("bot/router.py", "bot/tools/get_shipping_options.py"):
+        text = (pathlib.Path(__file__).resolve().parents[1] / name).read_text(encoding="utf8")
+        assert "bot.db" not in text and "vw_chat" not in text, name

@@ -193,7 +193,7 @@ def test_router_strips_an_invented_link_and_keeps_the_answer(monkeypatch, tmp_pa
     from bot import router
     from bot.llm_base import LLMTurn, ToolCall
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
-    monkeypatch.setitem(g.TOOLS, "get_shipping_options", lambda a: SHIP[0])
+    monkeypatch.setitem(g.TOOLS, "get_shipping_options", lambda a, ctx=None: SHIP[0])
 
     class Llm:
         n = 0

@@ -19,18 +19,29 @@ def plan_changes(rows, have):
     return [want[k] for k in want if k not in have], [k for k in have if k not in want], want
 
 
+def rows_for_types(rows, types):
+    """Only the rows of the types being synced, so a --types run can neither add nor remove other types."""
+    return [r for r in rows if r["source_type"] in types]
+
+
 def main():
     import sys
     from bot.store_config import valid_store_id
-    if len(sys.argv) != 2 or not valid_store_id(sys.argv[1]):
-        sys.exit("usage: python rag/sync.py <store uuid>   (syncs chunks.jsonl into that store's rows only)")
-    store = sys.argv[1]
-    rows = [json.loads(l) for l in open("chunks.jsonl")]
+    argv = sys.argv[1:]
+    types = list(POLICY_TYPES)                   # --types faq: only those types are compared, so rows of the others are kept
+    if "--types" in argv:
+        i = argv.index("--types")
+        types = argv[i + 1].split(",") if i + 1 < len(argv) else []
+        argv = argv[:i] + argv[i + 2:]
+    if len(argv) != 1 or not valid_store_id(argv[0]) or not types or any(t not in POLICY_TYPES for t in types):
+        sys.exit("usage: python rag/sync.py <store uuid> [--types faq,blog,...]   (syncs chunks.jsonl into that store's rows only)")
+    store = argv[0]
+    rows = rows_for_types([json.loads(l) for l in open("chunks.jsonl")], types)
     with psycopg.connect(os.environ["RAG_DB_URL"]) as con:
         register_vector(con)
         have = {(k, h) for k, h in con.execute(
             "SELECT source_key, content_hash FROM rag_chunks WHERE store_uuid = %s AND source_type = ANY(%s)",
-            (store, list(POLICY_TYPES)))}
+            (store, types))}
         new, gone, want = plan_changes(rows, have)
         vecs = embed([r["content"] for r in new]) if new else []
         for r, v in zip(new, vecs):

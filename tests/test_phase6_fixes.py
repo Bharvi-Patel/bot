@@ -7,33 +7,38 @@ from bot.llm_base import LLMTurn, ToolCall
 from bot.tools.get_shipping_options import get_shipping_options
 from bot.tools.search_products import search_products
 
-# the two enabled rows in the real dev database
-SHIP = [
-    {"zone_name": "USA", "method_name": "Local Shipping", "flat_price": "299", "note": None},
-    {"zone_name": "In Store Pick Up", "method_name": "In-Store Pickup", "flat_price": None, "note": None},
-]
+# Shipping and pickup now come from the store's own policy text (no database, no rate table).
+PICKUP_CHUNK = {"title": "Shipping Policy", "page": "/shipping", "source_type": "policy",
+                "content": "In-store pickup is available at our showroom. Local shipping within the USA is $299."}
 
 
-def ship(args):
-    return get_shipping_options(args, run_query=lambda *_: [dict(r) for r in SHIP])
+class _Search:
+    def __init__(self):
+        self.questions = []
+
+    def __call__(self, args, ctx=None):
+        self.questions.append(args["question"])
+        return {"found": True, "chunks": [dict(PICKUP_CHUNK)]}
 
 
-# ---------- "Is in-store pickup available?" said no because 'pickup' did not match the zone 'In Store Pick Up' ----------
+# ---------- "Is in-store pickup available?" is answered from the policy text, with the keyword in the search ----------
 @pytest.mark.parametrize("word", ["pickup", "pick up", "In-Store Pickup", "store pickup", "PICKUP"])
-def test_pickup_keyword_finds_the_pickup_zone(word):
-    out = ship({"zone_keyword": word})
-    assert out["found"] is True and [z["zone"] for z in out["zones"]] == ["In Store Pick Up"]
-    assert out["zones"][0]["methods"][0]["method"] == "In-Store Pickup"
+def test_pickup_keyword_searches_the_policy_text_for_pickup(word):
+    search = _Search()
+    out = get_shipping_options({"zone_keyword": word}, search=search)
+    assert out["found"] is True and out["chunks"][0]["content"].startswith("In-store pickup")
+    assert word.strip() in search.questions[0]
 
 
-def test_usa_keyword_still_returns_only_the_usa_zone_and_unknown_words_find_nothing():
-    assert [z["zone"] for z in ship({"zone_keyword": "usa"})["zones"]] == ["USA"]
-    out = ship({"zone_keyword": "canada"})
-    assert out["found"] is False and "no parameters" in out["note"]
+def test_unknown_place_is_not_invented_when_the_pages_say_nothing():
+    out = get_shipping_options({"zone_keyword": "canada"}, search=lambda a, ctx=None: {"found": False})
+    assert out["found"] is False and "Do not guess" in out["note"]
 
 
-def test_symbol_only_keyword_means_no_filter():
-    assert len(ship({"zone_keyword": " - "})["zones"]) == 2
+def test_blank_or_symbol_keyword_is_just_the_general_question():
+    search = _Search()
+    get_shipping_options({"zone_keyword": "   "}, search=search)
+    assert search.questions == ["shipping delivery cost where we ship pickup"]
 
 
 # ---------- phone numbers inside policy pages are not the store's phone numbers ----------
@@ -81,7 +86,7 @@ def test_phone_from_another_tool_is_still_allowed(monkeypatch):
 
 
 def test_prompt_has_the_pickup_rule():
-    assert "In-store pickup" in g.SYSTEM_PROMPT and "only if the result does not list it" in g.SYSTEM_PROMPT
+    assert "In-store pickup" in g.SYSTEM_PROMPT and "never say pickup is available or unavailable on your own" in g.SYSTEM_PROMPT
 
 
 # ---------- "yeah show me other options": a good answer was blocked because it said "under $1,000" ----------

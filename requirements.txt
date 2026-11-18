@@ -10,3 +10,6 @@ pytest>=8
 google-genai
 openai>=1.40
 groq>=0.11
+beautifulsoup4>=4.12
+fastapi>=0.110
+uvicorn>=0.29

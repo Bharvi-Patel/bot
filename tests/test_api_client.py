@@ -404,3 +404,24 @@ def test_attribute_options_carry_the_ids_the_filter_takes():
     assert json.loads(t.requests[0].data) == {"q": "bed"}
     group = next(g for g in options if g["group"] == "Bed Size")
     assert {"id": "67ace390fcb040008ecdc568b52e13f2", "name": "Queen"} in group["values"]   # the id the real API filtered Queen by
+
+
+# ---------- faqs ----------
+
+def test_faqs_are_read_from_the_global_faq_endpoint_in_the_first_language():
+    client, t = make(fixture("faqs"))
+    faqs = client.faqs()
+    assert t.requests[0].full_url == "http://127.0.0.1:8001/faqs/global"
+    assert [f["slug"] for f in faqs] == ["what-payment-methods-do-you-accept", "is-online-payment-secure"]
+    assert faqs[0]["question"] == "What payment methods do you accept?"
+    assert faqs[0]["answer_html"].startswith("<p>We accept credit/debit cards")
+    assert "product_ids" not in faqs[0] and "product_faqs" not in faqs[0]      # store-wide text, no product links
+
+
+def test_faqs_skip_rows_without_a_question_or_answer_and_reject_a_wrong_shape():
+    body = b'{"faqs": [{"slug": "a", "faq_languages": [{"question": "Q?", "answer": ""}]}, {"slug": "b", "faq_languages": []}]}'
+    client, _ = make(body)
+    assert client.faqs() == []
+    client, _ = make(b'{"success": true, "data": []}')
+    with pytest.raises(ApiError):
+        client.faqs()

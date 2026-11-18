@@ -196,32 +196,52 @@ def test_store_info_real_stores_response_end_to_end():
     assert "secret" not in json.dumps(out).lower()
 
 
-# ---------- get_shipping_options ----------
-SHIP = [
-    {"zone_name": "USA", "method_name": "Ground", "flat_price": "49.00", "note": None},
-    {"zone_name": "USA", "method_name": "Pickup", "flat_price": "0", "note": "At the store"},
-    {"zone_name": "Canada", "method_name": "Freight", "flat_price": "call us", "note": None},
-]
+# ---------- get_shipping_options (answers from the store's policy text; no database, no prices of its own) ----------
+CHUNK = {"title": "Shipping Policy", "heading": None, "page": "/shipping", "source_type": "policy",
+         "source_key": "shipping", "similarity": 0.8, "content": "We ship within the USA. Local delivery is $299."}
 
 
-def test_shipping_groups_by_zone_and_converts_prices():
-    out = get_shipping_options({}, run_query=lambda *_: [dict(r) for r in SHIP])
-    usa = next(z for z in out["zones"] if z["zone"] == "USA")
-    assert [m["price"] for m in usa["methods"]] == [49.0, 0.0]
-    canada = next(z for z in out["zones"] if z["zone"] == "Canada")
-    assert canada["methods"][0]["price"] == "call us"
-    assert "delivery date" in out["note"]
+class FakeSearch:
+    def __init__(self, result):
+        self.result, self.calls = result, []
+
+    def __call__(self, args, ctx=None):
+        self.calls.append((args, ctx))
+        return self.result
 
 
-def test_shipping_zone_filter_and_no_match():
-    out = get_shipping_options({"zone_keyword": "usa"}, run_query=lambda *_: [dict(r) for r in SHIP])
-    assert [z["zone"] for z in out["zones"]] == ["USA"]
-    assert get_shipping_options({"zone_keyword": "mars"}, run_query=lambda *_: [dict(r) for r in SHIP])["found"] is False
+def test_shipping_returns_the_store_policy_text_and_passes_the_context():
+    search = FakeSearch({"found": True, "chunks": [dict(CHUNK)], "note": "x"})
+    ctx = object()
+    out = get_shipping_options({}, ctx=ctx, search=search)
+    assert out["found"] is True and out["source"] == "store_policy_text" and out["chunks"] == [CHUNK]
+    assert "delivery date" in out["note"] and "only if the text states it" in out["note"]
+    (args, got_ctx), = search.calls
+    assert got_ctx is ctx and args["source_types"] == ["policy", "guide", "faq"]
+
+
+def test_shipping_keyword_is_added_to_the_question():
+    search = FakeSearch({"found": False})
+    out = get_shipping_options({"zone_keyword": "Canada"}, search=search)
+    assert "Canada" in search.calls[0][0]["question"]
+    assert out["found"] is False and "Do not guess" in out["note"]
+
+
+def test_shipping_search_failure_is_unavailable_not_a_guess():
+    out = get_shipping_options({}, search=FakeSearch({"error": "policy search is unavailable right now"}))
+    assert out["error"] == "shipping_information_unavailable" and "chunks" not in out
+
+
+def test_shipping_never_touches_the_database(monkeypatch):
+    import bot.db as db
+    monkeypatch.setattr(db, "run_query", lambda *a, **k: (_ for _ in ()).throw(AssertionError("database used")))
+    assert get_shipping_options({}, search=FakeSearch({"found": False}))["found"] is False
 
 
 @pytest.mark.parametrize("bad", [{"country": "US"}, {"zone_keyword": 5}, {"zone_keyword": "x" * 300}])
 def test_shipping_bad_input(bad):
-    assert "error" in get_shipping_options(bad, run_query=lambda *_: [])
+    search = FakeSearch({"found": False})
+    assert "error" in get_shipping_options(bad, search=search) and search.calls == []
 
 
 def test_failed_store_lookup_is_not_cached_as_contact_text(monkeypatch):

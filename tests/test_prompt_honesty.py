@@ -157,8 +157,8 @@ def test_no_prefix_when_the_answer_is_real_or_the_question_is_about_the_store():
 
 def test_shipping_note_tells_the_model_to_say_it_has_no_delivery_time_information():
     from bot.tools.get_shipping_options import get_shipping_options
-    rows = [{"zone_name": "USA", "method_name": "Local", "flat_price": 299, "note": None}]
-    out = get_shipping_options({}, run_query=lambda *_: rows)
+    chunk = {"title": "Shipping", "content": "Local delivery is $299."}
+    out = get_shipping_options({}, search=lambda *a, **k: {"found": True, "chunks": [chunk]})
     assert "I don't have delivery time information" in out["note"] and "Never promise a delivery date" in out["note"]
 
 

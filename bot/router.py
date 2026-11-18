@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import re
 from datetime import datetime, timezone
@@ -55,37 +56,29 @@ def log_for_review(question: str, reason: str, tools_used: list[str]) -> None:
         log.exception("could not write review log")
 
 
-_BRANDS: list | None = None                             # development only: the single-store SQL path (no store id)
 _BRANDS_BY_STORE: dict[str, tuple[float, list]] = {}    # store id -> (when loaded, brands)
 BRANDS_TTL = 300.0
 
 
 def known_brands(store_uuid: str | None = None) -> list:
-    """Brands the store carries. With a store_uuid they come from that store's API and are kept per store for
-    BRANDS_TTL seconds; one store's brands are never used for another. Without one (local development) they are read
-    once from the single-store brand view. A failed lookup returns [] and is retried next time; it must never break a
-    customer's search."""
-    global _BRANDS
-    if store_uuid:
-        hit = _BRANDS_BY_STORE.get(store_uuid)
-        if hit and time.monotonic() - hit[0] < BRANDS_TTL:
-            return hit[1]
-        try:
-            from bot.api_client import get_client
-            rows = get_client(ChatContext(store_uuid=store_uuid)).brands()
-            brands = [{"slug": b["slug"], "name": b["name"]} for b in rows if b.get("slug") and b.get("name")]
-        except Exception:
-            return []
-        _BRANDS_BY_STORE[store_uuid] = (time.monotonic(), brands)
-        return brands
-    if _BRANDS is None:
-        try:
-            from bot.db import run_query
-            rows = run_query("SELECT brand_slug, brand_name FROM vw_chat_brands WHERE active_products > 0")
-            _BRANDS = [{"slug": r["brand_slug"], "name": r["brand_name"]} for r in rows if r.get("brand_slug") and r.get("brand_name")]
-        except Exception:
-            return []
-    return _BRANDS
+    """Brands the store carries, from that store's API, kept per store for BRANDS_TTL seconds. One store's brands
+    are never used for another. Without a store_uuid the BOT_STORE_UUID setting is used (local development and
+    single-store setups); with neither, there are no brands. A failed lookup returns [] and is retried next time;
+    it must never break a customer's search."""
+    store_uuid = store_uuid or os.getenv("BOT_STORE_UUID")
+    if not store_uuid:
+        return []
+    hit = _BRANDS_BY_STORE.get(store_uuid)
+    if hit and time.monotonic() - hit[0] < BRANDS_TTL:
+        return hit[1]
+    try:
+        from bot.api_client import get_client
+        rows = get_client(ChatContext(store_uuid=store_uuid)).brands()
+        brands = [{"slug": b["slug"], "name": b["name"]} for b in rows if b.get("slug") and b.get("name")]
+    except Exception:
+        return []
+    _BRANDS_BY_STORE[store_uuid] = (time.monotonic(), brands)
+    return brands
 
 
 def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
