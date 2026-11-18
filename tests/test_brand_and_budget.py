@@ -68,14 +68,14 @@ def test_both_repairs_work_together():
 
 
 def test_a_reply_with_one_invented_price_is_still_blocked_after_the_repairs(monkeypatch):
-    monkeypatch.setattr(router, "known_brands", lambda: [])
+    monkeypatch.setattr(router, "known_brands", lambda *a: [])
     monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Susie", "price": 63.8}]})
     out = router.answer(ASKED, FakeLLM(call("search_products", sort="price_asc"), say("Tables for under $70: Susie $63.80 and Bob $12")))
     assert out["reply"] == g.FALLBACK and out["blocked"] == "unverified_price"      # Bob's $12 is not real: nothing is sent
 
 
 def test_router_sends_the_cleaned_reply_not_the_fallback(monkeypatch):
-    monkeypatch.setattr(router, "known_brands", lambda: [])
+    monkeypatch.setattr(router, "known_brands", lambda *a: [])
     monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Susie", "price": 63.8}]})
     out = router.answer(ASKED, FakeLLM(call("search_products", sort="price_asc"), say(REPLY)))
     assert out["blocked"] is None and "$70" not in out["reply"] and "$63.80" in out["reply"]
@@ -113,7 +113,7 @@ def test_the_longest_brand_name_wins_and_other_words_do_not_match():
 
 def test_router_searches_the_brand_not_the_invented_category(monkeypatch):
     seen = []
-    monkeypatch.setattr(router, "known_brands", lambda: KNOWN)
+    monkeypatch.setattr(router, "known_brands", lambda *a: KNOWN)
     monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: (seen.append(a), {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})[1])
     out = router.answer(COASTER_Q, FakeLLM(call("search_products", category_slug="sofas-and-seating-sofas", brand_slug="coaster", max_price=300),
                                           say("We have the Jacotte Bar Stool from Coaster for $176.")))
@@ -121,7 +121,7 @@ def test_router_searches_the_brand_not_the_invented_category(monkeypatch):
 
 
 def test_a_brand_only_question_tells_the_model_not_to_pick_a_product_type_for_the_customer(monkeypatch):
-    monkeypatch.setattr(router, "known_brands", lambda: KNOWN)
+    monkeypatch.setattr(router, "known_brands", lambda *a: KNOWN)
     monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"products": [{"name": "Jacotte Bar Stool", "price": 176.0}]})
     llm = FakeLLM(call("search_products", category_slug="sofas-and-seating-sofas", brand_slug="coaster", max_price=300),
                   say("We have the Jacotte Bar Stool from Coaster for $176."))

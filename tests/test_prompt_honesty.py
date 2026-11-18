@@ -1,3 +1,6 @@
+from bot.context import ChatContext
+
+CTX = ChatContext(store_uuid="s-1")
 """The prompt must tell the model (a) to answer from returned policy chunks and (b) not to claim what the store does or does not offer without a source."""
 import bot.guardrails as g
 
@@ -115,8 +118,8 @@ def test_weak_policy_matches_carry_a_warning_note_and_strong_ones_do_not():
                 "url_path": "/financing", "content": "text", "similarity": sim}
     def run(sim):
         return lambda sql, params: [row(sim)] if "ORDER BY embedding" in sql else []
-    weak = search_policies({"question": "are there any coupon codes?"}, embed_query=lambda q: [0.1, 0.2], run_query=run(0.60))
-    strong = search_policies({"question": "what is the return policy?"}, embed_query=lambda q: [0.1, 0.2], run_query=run(0.70))
+    weak = search_policies({"question": "are there any coupon codes?"}, ctx=CTX, embed_query=lambda q: [0.1, 0.2], run_query=run(0.60))
+    strong = search_policies({"question": "what is the return policy?"}, ctx=CTX, embed_query=lambda q: [0.1, 0.2], run_query=run(0.70))
     assert weak["found"] and weak["note"].startswith(NOTE_WEAK) and "don't have that information" in weak["note"]
     assert strong["found"] and not strong["note"].startswith(NOTE_WEAK)
 
@@ -232,7 +235,7 @@ def test_router_makes_a_price_match_question_use_the_policy_search(monkeypatch):
                          LLMTurn(tool_calls=[ToolCall("search_policies", {"question": "price match"})]),
                          LLMTurn(text="I don't have that information. Please call the store.")], seen)
     monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "(731) 423-6565", "email": "shop@example.com"})
-    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.55, "note": "nothing"})
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a, ctx=None: {"found": False, "cutoff": 0.55, "note": "nothing"})
     out = router.answer("do you have a price match guarantee?", llm)
     assert out["tools_used"] == ["get_store_info", "search_policies"] and out["reply"].startswith("I don't have that information")
     assert "Call search_policies now" in seen[2][-1]["text"]

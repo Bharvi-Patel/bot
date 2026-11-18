@@ -1,4 +1,8 @@
+from bot.context import ChatContext
 from bot.tools.search_policies import fuse, keyword_query, search_policies
+
+
+CTX = ChatContext(store_uuid="s-1")
 
 
 def row(i, sim, key="returns", st="policy"):
@@ -25,20 +29,20 @@ def test_keyword_query_drops_stopwords():
 
 
 def test_found_with_citation_fields():
-    out = search_policies({"question": "return policy"}, run_query=runner([row(1, 0.8), row(2, 0.6)], []), embed_query=fake_embed)
+    out = search_policies({"question": "return policy"}, ctx=CTX, run_query=runner([row(1, 0.8), row(2, 0.6)], []), embed_query=fake_embed)
     assert out["found"] is True
     assert out["chunks"][0]["page"] == "/returns" and out["chunks"][0]["title"] == "Returns"
     assert "Answer ONLY" in out["note"]
 
 
 def test_below_cutoff_is_not_found_and_reports_best():
-    out = search_policies({"question": "coupon codes"}, run_query=runner([row(1, 0.41), row(2, 0.3)], [row(3, 0.2)]), embed_query=fake_embed)
+    out = search_policies({"question": "coupon codes"}, ctx=CTX, run_query=runner([row(1, 0.41), row(2, 0.3)], [row(3, 0.2)]), embed_query=fake_embed)
     assert out["found"] is False and out["best_similarity"] == 0.41
     assert "Do NOT answer" in out["note"]
 
 
 def test_keyword_hit_under_cutoff_is_still_dropped():
-    out = search_policies({"question": "x"}, run_query=runner([row(1, 0.9)], [row(7, 0.2)]), embed_query=fake_embed)
+    out = search_policies({"question": "x"}, ctx=CTX, run_query=runner([row(1, 0.9)], [row(7, 0.2)]), embed_query=fake_embed)
     assert [c["content"] for c in out["chunks"]] == ["text 1"]
 
 
@@ -50,19 +54,19 @@ def test_fusion_boosts_chunk_found_by_both():
 
 def test_top_k_and_default_source_types_are_passed():
     seen = []
-    search_policies({"question": "warranty"}, run_query=runner([row(i, 0.9) for i in range(8)], [], seen), embed_query=fake_embed)
-    assert seen[0][1][1] == ["policy", "guide", "faq"] and seen[0][1][3] == 8
+    search_policies({"question": "warranty"}, ctx=CTX, run_query=runner([row(i, 0.9) for i in range(8)], [], seen), embed_query=fake_embed)
+    assert seen[0][1][2] == ["policy", "guide", "faq"] and seen[0][1][4] == 8
 
 
 def test_bad_args():
-    assert "error" in search_policies({}, embed_query=fake_embed)
-    assert "error" in search_policies({"question": "x", "sql": "drop"}, embed_query=fake_embed)
-    assert "error" in search_policies({"question": "x", "source_types": ["product"]}, embed_query=fake_embed)
+    assert "error" in search_policies({}, ctx=CTX, embed_query=fake_embed)
+    assert "error" in search_policies({"question": "x", "sql": "drop"}, ctx=CTX, embed_query=fake_embed)
+    assert "error" in search_policies({"question": "x", "source_types": ["product"]}, ctx=CTX, embed_query=fake_embed)
 
 
 def test_db_failure_returns_safe_error():
     def boom(sql, params): raise RuntimeError("connection refused host=secret")
-    out = search_policies({"question": "returns"}, run_query=boom, embed_query=fake_embed)
+    out = search_policies({"question": "returns"}, ctx=CTX, run_query=boom, embed_query=fake_embed)
     assert out["error"] == "policy search is unavailable right now" and "secret" not in str(out)
 
 

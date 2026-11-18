@@ -69,8 +69,8 @@ class OpenAICompatChat(GroqChat):
             raise SystemExit(f"Model {self.model!r} is not available on {self.preset}.\n"
                              f"Set SJ_LLM_MODEL in .env to one of these:\n  {shown}")
 
-    def _messages(self, messages: list[dict]) -> list[dict]:
-        out = super()._messages(messages)
+    def _messages(self, messages: list[dict], system: str | None = None) -> list[dict]:
+        out = super()._messages(messages, system)
         if not self.short_ids:
             return out
         remap: dict[str, str] = {}

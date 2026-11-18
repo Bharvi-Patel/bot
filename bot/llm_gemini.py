@@ -58,9 +58,10 @@ class GeminiChat:
         flush()
         return contents
 
-    def generate(self, messages: list[dict]) -> LLMTurn:
+    def generate(self, messages: list[dict], system: str | None = None) -> LLMTurn:
+        config = self._config if system is None else self._config.model_copy(update={"system_instruction": system})
         resp = self._client.models.generate_content(
-            model=self.model, contents=self._contents(messages), config=self._config)
+            model=self.model, contents=self._contents(messages), config=config)
         if not resp.candidates or resp.candidates[0].content is None:
             return LLMTurn()                                      # blocked or empty: the router will fall back
         content = resp.candidates[0].content

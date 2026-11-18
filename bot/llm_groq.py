@@ -59,8 +59,8 @@ class GroqChat:
                              f"Set SJ_LLM_MODEL in .env to one of these (pick a chat model, not whisper/tts/guard):\n  "
                              + "\n  ".join(ids))
 
-    def _messages(self, messages: list[dict]) -> list[dict]:
-        out: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    def _messages(self, messages: list[dict], system: str | None = None) -> list[dict]:
+        out: list[dict] = [{"role": "system", "content": system or SYSTEM_PROMPT}]
         pending: list[str] = []                                  # call ids waiting for their tool message
         for m in messages:
             role = m["role"]
@@ -91,8 +91,8 @@ class GroqChat:
             kw["reasoning_effort"] = effort
         return self._client.chat.completions.create(**kw)
 
-    def generate(self, messages: list[dict]) -> LLMTurn:
-        payload = self._messages(messages)
+    def generate(self, messages: list[dict], system: str | None = None) -> LLMTurn:
+        payload = self._messages(messages, system)
         for attempt in range(3):
             try:
                 resp = self._create(payload)

@@ -7,13 +7,19 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from bot import tracing
-from bot.guardrails import (CONTACT_UNTRUSTED_TOOLS, EXTRACTION_REPLY, FALLBACK, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
+from bot.context import ChatContext
+from bot.guardrails import (CONTACT_UNTRUSTED_TOOLS, FALLBACK, SYSTEM_PROMPT, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
+
+from bot.prompt import extraction_reply, render_system_prompt
+from bot.store_config import StoreNotConfigured
+from bot.stores import UNAVAILABLE_REPLY, config_for
 
 log = logging.getLogger(__name__)
 
@@ -49,13 +55,29 @@ def log_for_review(question: str, reason: str, tools_used: list[str]) -> None:
         log.exception("could not write review log")
 
 
-_BRANDS: list | None = None
+_BRANDS: list | None = None                             # development only: the single-store SQL path (no store id)
+_BRANDS_BY_STORE: dict[str, tuple[float, list]] = {}    # store id -> (when loaded, brands)
+BRANDS_TTL = 300.0
 
 
-def known_brands() -> list:
-    """Brands the store carries, read once per process from the brand view. A failed lookup returns [] (and is retried next time);
-    it must never break a customer's search."""
+def known_brands(store_uuid: str | None = None) -> list:
+    """Brands the store carries. With a store_uuid they come from that store's API and are kept per store for
+    BRANDS_TTL seconds; one store's brands are never used for another. Without one (local development) they are read
+    once from the single-store brand view. A failed lookup returns [] and is retried next time; it must never break a
+    customer's search."""
     global _BRANDS
+    if store_uuid:
+        hit = _BRANDS_BY_STORE.get(store_uuid)
+        if hit and time.monotonic() - hit[0] < BRANDS_TTL:
+            return hit[1]
+        try:
+            from bot.api_client import get_client
+            rows = get_client(ChatContext(store_uuid=store_uuid)).brands()
+            brands = [{"slug": b["slug"], "name": b["name"]} for b in rows if b.get("slug") and b.get("name")]
+        except Exception:
+            return []
+        _BRANDS_BY_STORE[store_uuid] = (time.monotonic(), brands)
+        return brands
     if _BRANDS is None:
         try:
             from bot.db import run_query
@@ -70,13 +92,22 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
            ctx=None) -> dict:
     """Returns {"reply": str, "tools_used": [names], "blocked": reason or None}.
     ctx (bot.context.ChatContext) says who is asking; your server builds it from the request, never from the message."""
+    try:
+        cfg = config_for(ctx)                           # this chat's store: its name, domains and rules
+    except StoreNotConfigured as exc:                   # unknown or switched-off store: no model call at all
+        log.warning("chat refused: %s", exc)
+        return {"reply": UNAVAILABLE_REPLY, "tools_used": [], "blocked": "store_not_configured"}
+    store_uuid = getattr(ctx, "store_uuid", None)
+    prompt = render_system_prompt(cfg)
+    system = None if prompt == SYSTEM_PROMPT else prompt   # only a store whose prompt differs sends its own
+
     question = (user_message or "").strip()[:MAX_USER_CHARS]
     if not question:
         return {"reply": "How can I help you today?", "tools_used": [], "blocked": None}
 
     if is_extraction_attempt(question):                 # asks for our prompt, tools or database: the model never sees it
         log_for_review(question, "extraction_attempt", [])
-        return {"reply": EXTRACTION_REPLY, "tools_used": [], "blocked": "extraction_attempt"}
+        return {"reply": extraction_reply(cfg), "tools_used": [], "blocked": "extraction_attempt"}
 
     if is_order_change_request(question):               # cancel / change / refund an order: fixed reply, the model never sees it
         log_for_review(question, "order_change_request", [])
@@ -101,7 +132,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
 
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
-            turn = tracing.generate(llm, messages)
+            turn = tracing.generate(llm, messages, system)
         except Exception:
             log.exception("llm call failed")
             reason = "llm_error"
@@ -154,7 +185,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             else:
                 args, brand_only = call.args, False
                 if call.name == "search_products":
-                    args, brand_only = ground_brand_search_ex(call.args, question, known_brands())
+                    args, brand_only = ground_brand_search_ex(call.args, question, known_brands(store_uuid))
                     if args != call.args:
                         log_for_review(question, "brand_search_grounded", tools_used)
                 with tracing.span(f"tool:{call.name}", input=args) as sp:
@@ -188,14 +219,14 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
         log_for_review(question, "holiday_hours_replaced", tools_used)
         reply = holiday
     if reply is not None:
-        trusted = store_contact_text()
+        trusted = store_contact_text(store_uuid)
         with tracing.span("reply_check", input=reply) as sp:
-            ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
+            ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies, cfg.allowed_domains)
             sp.update(output={"ok": ok, "reason": why})
         for _ in range(2):                                             # right answer, bad contact line or link: fix it
             if ok or why not in ("unknown_email", "unknown_phone", "unknown_link", "unverified_price", "internal_leak"):
                 break
-            fixed = (strip_unknown_links(reply, results, question) if why == "unknown_link"
+            fixed = (strip_unknown_links(reply, results, question, cfg.allowed_domains) if why == "unknown_link"
                      else repair_unverified_prices(reply, results, user_said, earlier_replies) if why == "unverified_price"
                      else strip_tool_name_links(reply) if why == "internal_leak"
                      else repair_contacts(reply, contact_results, trusted))
@@ -204,7 +235,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             log.warning("repaired reply (%s)", why)
             log_for_review(question, f"repaired_{why}", tools_used)
             reply = fixed
-            ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies)
+            ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies, cfg.allowed_domains)
         if not ok:
             blocked_reply = reply
             reply, reason = None, why

@@ -33,7 +33,7 @@ def test_everything_else_is_left_alone():
 
 
 def test_router_searches_policies_before_accepting_i_dont_have_that(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"results": [{"title": "Financing", "text": "Snap Finance and Koalafi"}]})
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a, ctx=None: {"results": [{"title": "Financing", "text": "Snap Finance and Koalafi"}]})
     llm = FakeLLM(say(AFFIRM), call("search_policies", query="affirm klarna financing"),
                   say("We offer financing through Snap Finance and Koalafi."))
     out = router.answer("do you take affirm or klarna?", llm)

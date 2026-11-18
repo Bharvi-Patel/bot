@@ -64,8 +64,8 @@ class OllamaChat:
                              "or set SJ_LLM_MODEL in .env to one you already have:\n  " + "\n  ".join(names))
 
     # ---------------------------------------------------------------- request
-    def _messages(self, messages: list[dict]) -> list[dict]:
-        out: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    def _messages(self, messages: list[dict], system: str | None = None) -> list[dict]:
+        out: list[dict] = [{"role": "system", "content": system or SYSTEM_PROMPT}]
         for m in messages:
             role = m["role"]
             if role == "user":
@@ -109,8 +109,8 @@ class OllamaChat:
             raise httpx.HTTPStatusError(f"{resp.status_code}: {resp.text[:400]}", request=resp.request, response=resp)
         return resp.json()
 
-    def generate(self, messages: list[dict]) -> LLMTurn:
-        payload = self._messages(messages)
+    def generate(self, messages: list[dict], system: str | None = None) -> LLMTurn:
+        payload = self._messages(messages, system)
         think = self._think()
         data: dict = {}
         for attempt in range(3):

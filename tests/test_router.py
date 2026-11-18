@@ -148,7 +148,7 @@ def _policy_hit(sim=0.9):
 
 def test_bare_contact_reply_after_solid_policy_match_is_retried(monkeypatch):
     monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
-    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: _policy_hit())
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a, ctx=None: _policy_hit())
     llm = FakeLLM(call("get_store_info"), call("search_policies", query="financing"),
                   say("You can reach us at 555-0100 or info@store.com for more details."),
                   say("Financing is offered through Acme Credit. Call 555-0100 for details."))
@@ -159,7 +159,7 @@ def test_bare_contact_reply_after_solid_policy_match_is_retried(monkeypatch):
 
 def test_bare_contact_retry_happens_only_once(monkeypatch):
     monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
-    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: _policy_hit())
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a, ctx=None: _policy_hit())
     bare = "You can reach us at 555-0100 or info@store.com for more details."
     llm = FakeLLM(call("get_store_info"), call("search_policies", query="financing"), say(bare), say(bare))
     out = router.answer("do you offer financing?", llm)
@@ -217,7 +217,7 @@ def test_hours_nudge_only_matches_hours_questions():
 
 
 def test_misspelt_product_sent_to_the_policy_search_is_retried_in_the_catalog(monkeypatch):
-    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: {"found": False, "cutoff": 0.65, "chunks": []})
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a, ctx=None: {"found": False, "cutoff": 0.65, "chunks": []})
     monkeypatch.setitem(g.TOOLS, "list_categories", lambda a, ctx=None: {"categories": [{"slug": "recliners", "title": "Recliners"}]})
     monkeypatch.setitem(g.TOOLS, "search_products", lambda a, ctx=None: {"count": 1, "products": [{"sku": "R1", "name": "Rocker Recliner", "price": 299.0}]})
     llm = FakeLLM(call("search_policies", question="cheep reclyners"), say("I don't have information about that."),

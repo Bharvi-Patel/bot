@@ -20,6 +20,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from bot.store_config import valid_store_id
+
 CDN_PLACEHOLDER = "cdn_folder"
 
 
@@ -451,9 +453,6 @@ class ApiClient:
         }
 
 
-_STORE_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
 def get_client(ctx: Any = None) -> ApiClient:
     """The API client for the store this chat belongs to (ctx.store_uuid).
 
@@ -464,7 +463,7 @@ def get_client(ctx: Any = None) -> ApiClient:
     store_uuid = getattr(ctx, "store_uuid", None) or os.getenv("BOT_STORE_UUID")
     if not store_uuid:
         raise ApiError("no store selected: ctx.store_uuid is empty and BOT_STORE_UUID is not set")
-    if not _STORE_UUID_RE.match(store_uuid):  # it goes into a request header, so no spaces or line breaks
+    if not valid_store_id(store_uuid):  # it goes into a request header, so no spaces or line breaks
         raise ApiError("the store id has characters that are not allowed")
     try:
         return ApiClient(ApiConfig.from_env(store_uuid))

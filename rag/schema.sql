@@ -2,6 +2,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE rag_chunks (
   id            bigserial PRIMARY KEY,
+  store_uuid    text NOT NULL,      -- which store this text belongs to; every search filters on it
   source_type   text NOT NULL,      -- policy | guide | brand_info | blog | faq | product
   source_key    text NOT NULL,      -- page slug, faq uuid, or product_uuid
   title         text,
@@ -17,3 +18,4 @@ CREATE TABLE rag_chunks (
 );
 CREATE INDEX ON rag_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON rag_chunks (source_type);
+CREATE INDEX ON rag_chunks (store_uuid, source_type);

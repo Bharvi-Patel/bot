@@ -163,13 +163,15 @@ def _view(messages: list[dict]) -> list[dict]:
     return out
 
 
-def generate(llm: Any, messages: list[dict]):
-    """llm.generate(messages) as a traced generation, with the tokens it used."""
+def generate(llm: Any, messages: list[dict], system: str | None = None):
+    """llm.generate(messages) as a traced generation, with the tokens it used. A per-store system prompt is passed
+    only when there is one, so an adapter that has no such parameter keeps working."""
+    call = (lambda: llm.generate(messages)) if system is None else (lambda: llm.generate(messages, system=system))
     if _client is None:
-        return llm.generate(messages)
+        return call()
     before = getattr(llm, "tokens", 0) or 0
     with span("llm", as_type="generation", input=_view(messages), model=getattr(llm, "model", None)) as gen:
-        turn = llm.generate(messages)
+        turn = call()
         used = (getattr(llm, "tokens", 0) or 0) - before
         gen.update(output={"text": turn.text, "tool_calls": [{"name": c.name, "args": c.args} for c in turn.tool_calls]},
                    **({"usage_details": {"total": used}} if used > 0 else {}))

@@ -16,6 +16,8 @@ import os
 import re
 from typing import Any, Callable
 
+from bot.store_config import resolve_store_uuid
+
 log = logging.getLogger(__name__)
 
 DEFAULT_TYPES = ["policy", "guide", "faq"]
@@ -34,12 +36,12 @@ STOP = set(
 COLS = "id, source_type, source_key, title, heading, url_path, content, 1 - (embedding <=> %s::vector) AS similarity"
 VECTOR_SQL = (
     f"SELECT {COLS} FROM rag_chunks "
-    "WHERE source_type = ANY(%s) AND embedding IS NOT NULL "
+    "WHERE store_uuid = %s AND source_type = ANY(%s) AND embedding IS NOT NULL "
     "ORDER BY embedding <=> %s::vector LIMIT %s"
 )
 KEYWORD_SQL = (
     f"SELECT {COLS} FROM rag_chunks "
-    "WHERE source_type = ANY(%s) AND embedding IS NOT NULL "
+    "WHERE store_uuid = %s AND source_type = ANY(%s) AND embedding IS NOT NULL "
     "AND to_tsvector('english', content) @@ websearch_to_tsquery('english', %s) "
     "ORDER BY ts_rank_cd(to_tsvector('english', content), websearch_to_tsquery('english', %s)) DESC LIMIT %s"
 )
@@ -65,20 +67,23 @@ NOTE_NOT_FOUND = (
 )
 
 
-# Page text written by people sometimes names another showroom (e.g. the Financing page). Sentences matching this are removed
-# before the model sees them, so it cannot repeat them. Set SJ_RAG_SCRUB in .env to a different regex, or to "" to turn it off.
-_SCRUB_PATTERN = os.environ.get("SJ_RAG_SCRUB", r"\b(?:brooklyn|jamaica)\b")
-SCRUB = re.compile(_SCRUB_PATTERN, re.I) if _SCRUB_PATTERN else None
-
-
-def scrub_text(text: str) -> str:
-    """Drop every sentence (or line) that matches SCRUB; leave the rest of the chunk untouched."""
-    if not SCRUB or not SCRUB.search(text):
+# Page text written by people sometimes names another showroom (e.g. the Financing page). Sentences naming one of the store's
+# scrub_terms (StoreConfig) are removed before the model sees them, so it cannot repeat them.
+def scrub_text(text: str, terms: tuple[str, ...] | None = None) -> str:
+    """Drop every sentence (or line) that names one of the terms; leave the rest of the chunk untouched.
+    terms=None means the development store's terms, so a caller that has no store settings keeps the old behaviour."""
+    if terms is None:
+        from bot.dev_defaults import SOUTH_JACKSON
+        terms = SOUTH_JACKSON.scrub_terms
+    if not terms:
+        return text
+    bad = re.compile(r"\b(?:" + "|".join(re.escape(t) for t in terms) + r")\b", re.I)
+    if not bad.search(text):
         return text
     kept = []
     for line in text.split("\n"):
         parts = re.split(r"(?<=[.!?])\s+", line)
-        kept.append(" ".join(p for p in parts if not SCRUB.search(p)))
+        kept.append(" ".join(p for p in parts if not bad.search(p)))
     return "\n".join(kept)
 
 
@@ -115,7 +120,8 @@ def fuse(vector_rows: list[dict], keyword_rows: list[dict], cutoff: float, top_k
     return kept[:top_k]
 
 
-def search_policies(args: dict[str, Any], run_query: Callable | None = None, embed_query: Callable | None = None) -> dict[str, Any]:
+def search_policies(args: dict[str, Any], run_query: Callable | None = None, embed_query: Callable | None = None,
+                    ctx=None) -> dict[str, Any]:
     allowed_args = {"question", "source_types"}
     if not isinstance(args, dict) or set(args) - allowed_args:
         return {"error": "allowed parameters: question (required), source_types (optional)"}
@@ -123,6 +129,10 @@ def search_policies(args: dict[str, Any], run_query: Callable | None = None, emb
     if not isinstance(question, str) or not question.strip():
         return {"error": "question is required"}
     question = question.strip()[:MAX_QUESTION_CHARS]
+    store_uuid = resolve_store_uuid(ctx)
+    if not store_uuid:                                    # never search without knowing whose pages these are
+        return {"error": "policy search is unavailable right now",
+                "note": "Do not guess. Point the customer to the store phone or email (get_store_info)."}
     types = args.get("source_types") or DEFAULT_TYPES
     if not isinstance(types, list) or not types or any(t not in ALLOWED_TYPES for t in types):
         return {"error": f"source_types must be a list from {sorted(ALLOWED_TYPES)}"}
@@ -133,14 +143,19 @@ def search_policies(args: dict[str, Any], run_query: Callable | None = None, emb
             embed_query = default_embed
         run_query = run_query or _default_run_query
         vec = _vector_literal(embed_query(question))
-        vector_rows = run_query(VECTOR_SQL, [vec, types, vec, FETCH])
+        vector_rows = run_query(VECTOR_SQL, [vec, store_uuid, types, vec, FETCH])
         kw = keyword_query(question)
-        keyword_rows = run_query(KEYWORD_SQL, [vec, types, kw, kw, FETCH]) if kw else []
+        keyword_rows = run_query(KEYWORD_SQL, [vec, store_uuid, types, kw, kw, FETCH]) if kw else []
     except Exception:
         log.exception("search_policies failed")
         return {"error": "policy search is unavailable right now",
                 "note": "Do not guess. Point the customer to the store phone or email (get_store_info)."}
 
+    try:
+        from bot.stores import config_for
+        terms = config_for(ctx).scrub_terms
+    except Exception:                                     # no usable settings: scrub nothing rather than guess another store's terms
+        terms = ()
     best = max((float(r["similarity"]) for r in vector_rows), default=None)
     kept = fuse(vector_rows, keyword_rows, CUTOFF, TOP_K)
     if not kept:
@@ -152,7 +167,7 @@ def search_policies(args: dict[str, Any], run_query: Callable | None = None, emb
         "chunks": [{
             "title": r["title"], "heading": r["heading"], "page": r["url_path"],
             "source_type": r["source_type"], "source_key": r["source_key"],
-            "similarity": round(float(r["similarity"]), 3), "content": scrub_text(r["content"]),
+            "similarity": round(float(r["similarity"]), 3), "content": scrub_text(r["content"], terms),
         } for r in kept],
         "note": (NOTE_WEAK if max(float(r["similarity"]) for r in kept) < WEAK_MATCH else "") + NOTE_FOUND,
     }

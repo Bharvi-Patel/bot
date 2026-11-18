@@ -65,7 +65,7 @@ class FakeLLM:
 def test_router_repairs_a_reply_that_copied_a_phone_from_a_policy_page(monkeypatch, tmp_path):
     monkeypatch.setattr(router, "REVIEW_LOG", tmp_path / "review.jsonl")
     monkeypatch.setattr(g, "_STORE_CONTACT_TEXT", STORE)
-    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a: PAGE)
+    monkeypatch.setitem(g.TOOLS, "search_policies", lambda a, ctx=None: PAGE)
     llm = FakeLLM(LLMTurn(tool_calls=[ToolCall("search_policies", {"question": "financing"})]),
                   LLMTurn(text="You can apply in store or call (718) 384-8413."))
     out = router.answer("do you offer financing?", llm)
