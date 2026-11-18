@@ -425,3 +425,32 @@ def test_faqs_skip_rows_without_a_question_or_answer_and_reject_a_wrong_shape():
     client, _ = make(b'{"success": true, "data": []}')
     with pytest.raises(ApiError):
         client.faqs()
+
+
+def test_page_is_read_from_the_page_endpoint_in_the_first_language():
+    client, t = make(fixture("page_mattress_buying_guide"))
+    page = client.page("mattress-buying-guide")
+    assert t.requests[0].full_url == "http://127.0.0.1:8001/page/mattress-buying-guide"
+    assert page["slug"] == "mattress-buying-guide" and page["title"] == "Mattress Buying Guide"
+    assert page["html"].startswith("<!-- B3 MASTER FILE") and "Memory Foam Mattresses" in page["html"]
+    assert page["status"] == 1 and page["deleted"] is False and page["advanced"] is False
+    assert page["updated_at"] == "2026-06-07T16:31:33.000000Z"
+    assert "global_options" not in page and "page_languages" not in page      # only the fields the index needs
+
+
+def test_page_accepts_a_wrapped_answer_quotes_the_slug_and_rejects_a_wrong_shape():
+    body = b'{"success": true, "data": {"slug": "a", "status": 1, "page_languages": [{"title": "T", "long_description": "<p>x</p>"}]}}'
+    client, t = make(body)
+    assert client.page("a b/c")["html"] == "<p>x</p>"
+    assert t.requests[0].full_url.endswith("/page/a%20b%2Fc")
+    client, _ = make(b'{"slug": "a"}')
+    with pytest.raises(ApiError):
+        client.page("a")
+
+
+def test_page_marks_deleted_and_page_builder_pages_without_guessing_their_content():
+    body = (b'{"slug": "p", "status": 1, "deleted_at": "2026-01-01", "page_languages": '
+            b'[{"title": "P", "is_advanced": 1, "long_description": null, "builder_data": "{...}"}]}')
+    client, _ = make(body)
+    page = client.page("p")
+    assert page["deleted"] is True and page["advanced"] is True and page["html"] == ""

@@ -279,6 +279,21 @@ class ApiClient:
                         "sort_order": f.get("sort_order")})
         return out
 
+    def page(self, slug: str) -> dict[str, Any]:
+        """GET /page/{slug}: the page row itself, not wrapped. The text is page_languages[0].long_description (HTML) in the
+        store's first listed language. A page-builder page (is_advanced) keeps its content elsewhere; no response of that
+        kind has been seen, so it is returned as advanced=True with no html rather than guessed at."""
+        quoted = urllib.parse.quote(slug, safe="")
+        payload = self._request("GET", f"/page/{quoted}")
+        page = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+        if not isinstance(page, dict) or not isinstance(page.get("page_languages"), list):
+            raise ApiError("unexpected /page response shape")
+        lang = _first_language(page["page_languages"])
+        return {"slug": page.get("slug") or slug, "title": strip_html(lang.get("title")) or None,
+                "html": lang.get("long_description") or "", "status": page.get("status"),
+                "deleted": bool(page.get("deleted_at")), "updated_at": page.get("updated_at"),
+                "advanced": bool(lang.get("is_advanced"))}
+
     def brands(self) -> list[dict[str, Any]]:
         """GET /brands: vendors[] -> brands[] -> brand_languages[]. Flattened to one row per brand.
         The response has no product counts, so the bot cannot say how many products a brand has from this call."""

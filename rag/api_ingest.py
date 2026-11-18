@@ -3,9 +3,14 @@
     python rag/api_ingest.py <store uuid> [--types faq]   ->  writes chunks.jsonl for that store
     python rag/sync.py <store uuid> --types faq           ->  syncs those rows into the RAG database
 
-Only the types whose API response shape has been seen are supported. Today that is FAQs (GET /faqs/global).
-Pages (GET /page/{slug}) and blogs (GET /blogs) are NOT done: no saved response exists for them, and their field
-names are not guessed. Add each one here, with a fixture and a test, once a real response is available.
+Only the types whose API response shape has been seen are supported. Today that is FAQs (GET /faqs/global) and
+pages (GET /page/{slug}, the slugs coming from GET /stores). Blogs (GET /blogs) are NOT done: no saved response
+exists, and field names are not guessed. Add each one here, with a fixture and a test, once a real response is available.
+
+Pages become rows of type policy or guide (what sync.py --types takes after a page run). A page is indexed only if it
+is live (status 1, not deleted), has text, and its slug is recognised as a policy or guide page or named with
+--page-type slug=type. Every page left out is printed with the reason, and a page that still carries another store's
+demo data (the B3 template comment) is flagged, so nothing is dropped silently.
 
 Row format is the one rag/build.py writes and rag/sync.py reads, so the search tools need no change.
 """
@@ -14,12 +19,19 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so bot is importable
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))             # so build's cleaning helpers are importable
 
-SUPPORTED_TYPES = ("faq",)
+SUPPORTED_TYPES = ("faq", "page")
+PAGE_TYPES = ("policy", "guide", "brand_info")
+# Slug words that mark a page as store policy or help text. Anything else (home page, brand and landing pages) is left out
+# unless the person running the ingest names it with --page-type.
+POLICY_WORDS = ("return", "refund", "shipping", "delivery", "warranty", "terms", "privacy", "financ", "policy", "cancel", "payment")
+GUIDE_WORDS = ("care", "clean", "guide", "about", "contact")
+NEVER_INDEXED = {"home-page", "promotions", "sitemap", "test"}
 
 
 def _row(source_type: str, key: str, title: str, heading: str, text: str, url: str) -> dict:
@@ -53,13 +65,97 @@ def faq_rows(client) -> list[dict]:
     return rows
 
 
-def ingest(client, types=SUPPORTED_TYPES) -> list[dict]:
+def classify_page(slug: str, overrides: dict[str, str] | None = None) -> str | None:
+    """policy | guide | brand_info, or None when the page is not recognised (and so not indexed)."""
+    if overrides and slug in overrides:
+        return overrides[slug]
+    s = slug.lower()
+    if s in NEVER_INDEXED:
+        return None
+    if any(w in s for w in POLICY_WORDS):
+        return "policy"
+    if any(w in s for w in GUIDE_WORDS):
+        return "guide"
+    return None
+
+
+def _digits(text: str | None) -> str:
+    return re.sub(r"\D", "", text or "")
+
+
+def demo_leftovers(raw_html: str, clean_text: str, store: dict) -> list[str]:
+    """B3 page templates carry a comment such as 'Swap demo data ("Name", (555) 123-4567, example.com, City)'. If a phone
+    or domain from that list is still in the page text and is not this store's own, the page was never adapted to the store."""
+    low = clean_text.lower()
+    line = next((l for l in raw_html.splitlines() if "swap demo data" in l.lower()), "")
+    if "(" not in line or ")" not in line:
+        return []
+    listed = line[line.index("(", line.lower().index("swap demo data")) + 1: line.rindex(")")]
+    own_phone = _digits(store.get("phone"))
+    own = re.sub(r"[^a-z0-9]", "", ((store.get("name") or "") + (store.get("email") or "")).lower())
+    left = []
+    for tok in (t.strip().strip('"') for t in listed.split(", ")):
+        if re.fullmatch(r"\(?\d{3}\)?[ -]\d{3}-\d{4}", tok):
+            if own_phone and _digits(tok) != own_phone and _digits(tok) in _digits(clean_text):
+                left.append(tok)
+        elif re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", tok.lower()):
+            stem = tok.lower().split(".")[0]
+            if own and stem not in own and tok.lower() in low:
+                left.append(tok)
+    return left
+
+
+def page_rows(client, overrides: dict[str, str] | None = None, skipped: list | None = None,
+              warnings: list | None = None) -> list[dict]:
+    """Chunks for the store's live policy and help pages. Pages left out go into `skipped` as (slug, reason); pages that
+    still hold another store's demo data go into `warnings`."""
+    from build import chunk_text, html_to_markdown, strip_boilerplate
+    skipped = skipped if skipped is not None else []
+    warnings = warnings if warnings is not None else []
+    store = client.store_info()
+    rows: list[dict] = []
+    for entry in client.store_pages():
+        slug = entry.get("slug")
+        if not slug:
+            continue
+        kind = classify_page(slug, overrides)
+        if kind is None:
+            skipped.append((slug, "slug not recognised as a policy or guide page (use --page-type to include it)"))
+            continue
+        if entry.get("status") != 1:
+            skipped.append((slug, "not live (status is not 1)"))
+            continue
+        page = client.page(slug)
+        if page["deleted"] or page["status"] != 1:
+            skipped.append((slug, "deleted or not live"))
+            continue
+        if not page["html"].strip():
+            skipped.append((slug, "page-builder page with no text in long_description (no sample response yet)"
+                            if page["advanced"] else "no text"))
+            continue
+        text = strip_boilerplate(html_to_markdown(_unwrap_inline(page["html"])))
+        if not text.strip():
+            skipped.append((slug, "no text after cleaning"))
+            continue
+        leftovers = demo_leftovers(page["html"], text, store)
+        if leftovers:
+            warnings.append(f"{slug}: still has demo data from another store ({', '.join(leftovers)})")
+        title = page["title"] or entry.get("title") or slug
+        for crumb, body in chunk_text(title, text):
+            rows.append(_row(kind, slug, title, crumb, body, f"/{slug}") | {"updated_at": page["updated_at"]})
+    return rows
+
+
+def ingest(client, types=SUPPORTED_TYPES, overrides: dict[str, str] | None = None, skipped: list | None = None,
+           warnings: list | None = None) -> list[dict]:
     bad = [t for t in types if t not in SUPPORTED_TYPES]
     if bad:
         raise ValueError(f"not supported yet: {', '.join(bad)} (supported: {', '.join(SUPPORTED_TYPES)})")
     rows: list[dict] = []
     if "faq" in types:
         rows += faq_rows(client)
+    if "page" in types:
+        rows += page_rows(client, overrides, skipped, warnings)
     return rows
 
 
@@ -70,18 +166,34 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Write chunks.jsonl for one store from its storefront API.")
     ap.add_argument("store_uuid")
     ap.add_argument("--types", default=",".join(SUPPORTED_TYPES), help="comma list; supported: " + ",".join(SUPPORTED_TYPES))
+    ap.add_argument("--page-type", action="append", default=[], metavar="SLUG=TYPE",
+                    help="index this page as policy, guide or brand_info (repeat for several pages)")
     args = ap.parse_args(argv)
+    overrides = {}
+    for item in args.page_type:
+        slug, _, kind = item.partition("=")
+        if not slug or kind not in PAGE_TYPES:
+            ap.error(f"--page-type must look like slug=type with type one of {', '.join(PAGE_TYPES)}: {item!r}")
+        overrides[slug] = kind
     if not valid_store_id(args.store_uuid):
         ap.error("store_uuid has characters that are not allowed")
     types = tuple(t for t in args.types.split(",") if t)
+    skipped: list = []
+    warnings: list = []
     try:
-        rows = ingest(ApiClient(ApiConfig.from_env(args.store_uuid)), types)
+        rows = ingest(ApiClient(ApiConfig.from_env(args.store_uuid)), types, overrides, skipped, warnings)
     except ValueError as exc:
         ap.error(str(exc))
     with open("chunks.jsonl", "w", encoding="utf8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
     print(f"wrote {len(rows)} chunks for store {args.store_uuid} ({', '.join(types)})")
+    for slug, why in skipped:
+        print(f"  left out: {slug}: {why}")
+    for w in warnings:
+        print(f"  WARNING: {w}")
+    if "page" in types:
+        print("To load page rows: python rag/sync.py <store uuid> --types policy,guide,brand_info")
 
 
 if __name__ == "__main__":
