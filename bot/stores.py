@@ -42,6 +42,12 @@ def _configs() -> StoreConfigs | None:
     return _CONFIGS
 
 
+def is_multi_store() -> bool:
+    """True when BOT_STORE_CONFIG_DIR is set, so each chat gets its own store's settings. False means every chat would
+    use the South Jackson development settings (see config_for)."""
+    return _configs() is not None
+
+
 def config_for(ctx: Any) -> StoreConfig:
     """The settings for this chat's store. Raises StoreNotConfigured when the chat must not be answered."""
     global _WARNED
