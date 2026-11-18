@@ -120,20 +120,25 @@ def product_row(detail: dict, by_slug: dict[str, dict], url_template: str = URL,
     return row, None
 
 
-def listing_slugs(client, category_slugs: list[str], limit: int = 0) -> list[str]:
+def listing_slugs(client, category_slugs: list[str], limit: int = 0, report: list | None = None) -> list[str]:
+    """Product slugs under the categories. `report` gets (category, total the API claims, distinct slugs collected)."""
     seen: dict[str, None] = {}
     for cat in category_slugs:
-        page = 1
+        page, total, got = 1, None, set()
         while page <= MAX_PAGES:
             res = client.category_products(cat, page)
+            total = res.get("total", total)
             for p in res.get("products") or []:
                 if p.get("slug"):
                     seen.setdefault(p["slug"])
+                    got.add(p["slug"])
             if limit and len(seen) >= limit:
                 return list(seen)[:limit]
             if page >= (res.get("last_page") or 1):
                 break
             page += 1
+        if report is not None:
+            report.append((cat, total, len(got)))
     return list(seen)
 
 
@@ -151,7 +156,14 @@ def ingest(client, roots: list[str], keywords: list[str] = (), limit: int = 0,
         if notes is not None:
             notes.append(f"brands lookup failed ({exc}); brand slugs are guessed from names")
     rows = []
-    for slug in listing_slugs(client, scope, limit):
+    report: list = []
+    slugs = listing_slugs(client, scope, limit, report)
+    if notes is not None:
+        for cat, total, got in report:
+            flag = "" if total in (None, got) else "   <-- API total differs from products collected"
+            notes.append(f"category {cat}: API total {total}, collected {got}{flag}")
+        notes.append(f"{len(slugs)} distinct products across {len(report)} categories")
+    for slug in slugs:
         try:
             detail = client.product_detail(slug)
         except Exception as exc:  # one bad product must not stop the run, but it is reported
