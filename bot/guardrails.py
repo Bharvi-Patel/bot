@@ -45,7 +45,7 @@ TOOLS = {
     "get_order_status": get_order_status,
 }
 CTX_TOOLS = {"get_order_status", "get_store_info", "list_brands", "list_categories", "get_product_details", "search_policies", "search_products",
-             "list_attribute_values"}   # called as fn(args, ctx=ctx)
+             "list_attribute_values", "recommend_products"}   # called as fn(args, ctx=ctx)
 
 # Page text written by people can name another store or an old number, so contact details found inside it are not
 # trusted: a reply may only repeat phones/emails from other tools or from the store record (get_store_info).

@@ -1,3 +1,5 @@
+import pytest
+
 from bot.product_docs import compose_document, descendants, slugs_with_ancestors
 from bot.tools.recommend_products import recommend_products
 
@@ -25,6 +27,11 @@ def live(prices, missing=()):
 emb = lambda q: [0.1, 0.2]
 
 
+@pytest.fixture(autouse=True)
+def _single_store(monkeypatch):
+    monkeypatch.setenv("BOT_STORE_UUID", "store-1")   # tools find the store from ctx, or this setting for local use
+
+
 def test_price_comes_from_live_sql_not_the_index():
     out = recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8, price=999.0)]), embed_query=emb, confirm=live({"SKU1": 612.5}))
     assert out["products"][0]["price"] == 612.5 and out["products"][0]["name"] == "Live SKU1"
@@ -49,7 +56,41 @@ def test_filters_are_pushed_into_the_query_and_limit_applies():
                              run_query=runner(rows, seen), embed_query=emb, confirm=live({f"SKU{i}": 100.0 for i in range(8)}))
     sql, params = seen[0]
     assert "price <= %s" in sql and "brand_slug = %s" in sql and "= ANY(category_slugs)" in sql
-    assert params[1:4] == [500, "b", "desks"] and len(out["products"]) == 3
+    assert params[1:5] == ["store-1", 500, "b", "desks"] and len(out["products"]) == 3
+
+
+def test_the_search_is_limited_to_the_chats_own_store_never_another():
+    from types import SimpleNamespace
+    seen = []
+    recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8)], seen), embed_query=emb, confirm=live({"SKU1": 100.0}),
+                       ctx=SimpleNamespace(store_uuid="store-b"))
+    assert all("store_uuid = %s" in sql and params[1] == "store-b" for sql, params in seen) and seen
+
+
+def test_the_live_check_is_made_for_the_same_store(monkeypatch):
+    from types import SimpleNamespace
+    import bot.tools.get_product_details as gpd
+    asked = []
+    monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, **k: asked.append((a, getattr(ctx, "store_uuid", None))) or {"found": False})
+    recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8)]), embed_query=emb, ctx=SimpleNamespace(store_uuid="store-b"))
+    assert asked == [({"sku": "SKU1"}, "store-b")]
+
+
+def test_no_store_means_no_recommendations(monkeypatch):
+    monkeypatch.delenv("BOT_STORE_UUID", raising=False)
+    out = recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8)]), embed_query=emb, confirm=live({"SKU1": 1.0}))
+    assert "error" in out and "products" not in out
+
+
+def test_a_product_priced_by_size_is_kept_with_its_options_and_checked_against_the_budget():
+    def confirm(a):
+        return {"found": True, "product": {"name": "Royal Mattress", "price": None}, "price_range": {"min": 339.99, "max": 659.99},
+                "options": [{"price": 339.99, "attributes": {"Bed Size": "Twin"}}, {"price": 659.99, "attributes": {"Bed Size": "King"}}]}
+    ok = recommend_products({"query": "mattress", "max_price": 400}, run_query=runner([doc(1, 0.8)]), embed_query=emb, confirm=confirm)
+    assert ok["products"][0]["price"] is None and ok["products"][0]["price_range"] == {"min": 339.99, "max": 659.99}
+    assert len(ok["products"][0]["options"]) == 2 and "price null is priced by option" in ok["note"]
+    too_cheap_budget = recommend_products({"query": "mattress", "max_price": 100}, run_query=runner([doc(1, 0.8)]), embed_query=emb, confirm=confirm)
+    assert too_cheap_budget["found"] is False and too_cheap_budget["dropped_by_live_check"] == 1
 
 
 def test_under_cutoff_means_not_found():

@@ -13,6 +13,7 @@ import os
 import re
 from typing import Any, Callable
 
+from bot.store_config import resolve_store_uuid
 from bot.tools.search_policies import _default_run_query, _vector_literal, fuse, keyword_query
 
 log = logging.getLogger(__name__)
@@ -24,9 +25,10 @@ DEFAULT_LIMIT, MAX_LIMIT = 5, 8
 ALLOWED = {"query", "max_price", "min_price", "brand_slug", "category_slug", "limit"}
 
 COLS = "id, source_key, title, url_path, content, brand_slug, price, 1 - (embedding <=> %s::vector) AS similarity"
-BASE = "FROM rag_chunks WHERE source_type = 'product' AND embedding IS NOT NULL"
+BASE = "FROM rag_chunks WHERE store_uuid = %s AND source_type = 'product' AND embedding IS NOT NULL"   # first parameter after the vector: the store
 
-NOTE = ("Names and prices here come from live SQL: quote only these, never a price from anywhere else. Recommend only the "
+NOTE = ("Names and prices here come from the live store API: quote only these, never a price from anywhere else. A product with "
+        "price null is priced by option (for example size): quote only a price listed in its options, with the option name. Recommend only the "
         "products listed. If fewer than the customer wanted are listed, say so. No medical claims. Do not claim stock or "
         "delivery dates (use check_inventory / get_shipping_options).")
 NOTE_NONE = ("No matching products were found. Say so plainly and offer to search another category or budget. "
@@ -52,13 +54,17 @@ def _sku(content: str) -> str | None:
 
 
 def recommend_products(args: dict[str, Any], run_query: Callable | None = None, embed_query: Callable | None = None,
-                       confirm: Callable | None = None) -> dict[str, Any]:
+                       confirm: Callable | None = None, ctx=None) -> dict[str, Any]:
     if not isinstance(args, dict) or set(args) - ALLOWED:
         return {"error": f"allowed parameters: {sorted(ALLOWED)}"}
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
         return {"error": "query is required: describe what the customer wants"}
     query = query.strip()[:300]
+    store_uuid = resolve_store_uuid(ctx)
+    if not store_uuid:                                    # never recommend without knowing whose catalog this is
+        return {"error": "product recommendations are unavailable right now",
+                "note": "Do not guess products. Point the customer to the store (get_store_info)."}
     for k in ("max_price", "min_price"):
         if args.get(k) is not None and not _num(args[k]):
             return {"error": f"{k} must be a number"}
@@ -74,16 +80,19 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
             from bot.embeddings import embed_query as default_embed
             embed_query = default_embed
         if confirm is None:
-            from bot.tools.get_product_details import get_product_details as confirm
+            from bot.tools.get_product_details import get_product_details
+
+            def confirm(a):                               # the live check reads THIS store's API, not the default store
+                return get_product_details(a, ctx=ctx)
         run_query = run_query or _default_run_query
         vec = _vector_literal(embed_query(query))
         fsql, fparams = _filters(args)
-        vector_rows = run_query(f"SELECT {COLS} {BASE}{fsql} ORDER BY embedding <=> %s::vector LIMIT %s", [vec, *fparams, vec, FETCH])
+        vector_rows = run_query(f"SELECT {COLS} {BASE}{fsql} ORDER BY embedding <=> %s::vector LIMIT %s", [vec, store_uuid, *fparams, vec, FETCH])
         kw = keyword_query(query)
         keyword_rows = run_query(
             f"SELECT {COLS} {BASE}{fsql} AND to_tsvector('english', content) @@ websearch_to_tsquery('english', %s) "
             "ORDER BY ts_rank_cd(to_tsvector('english', content), websearch_to_tsquery('english', %s)) DESC LIMIT %s",
-            [vec, *fparams, kw, kw, FETCH]) if kw else []
+            [vec, store_uuid, *fparams, kw, kw, FETCH]) if kw else []
     except Exception:
         log.exception("recommend_products search failed")
         return {"error": "product search is unavailable right now", "note": "Do not guess products. Point the customer to the store (get_store_info)."}
@@ -92,7 +101,7 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
     candidates = fuse(vector_rows, keyword_rows, CUTOFF, CANDIDATES)
 
     products, dropped = [], 0
-    for r in candidates:                               # SQL confirms it
+    for r in candidates:                               # the store API confirms it
         sku = _sku(r["content"])
         try:
             live = confirm({"sku": sku}) if sku else {"found": False}
@@ -101,13 +110,18 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
             live = {"found": False}
         prod = live.get("product") if live.get("found") else None
         price = prod.get("price") if prod else None
-        if prod is None or price is None:
+        rng = live.get("price_range") if prod else None   # a product priced by option (size...) has no single price
+        if prod is None or (price is None and not rng):
             dropped += 1; continue
-        if (args.get("max_price") is not None and price > args["max_price"]) or (args.get("min_price") is not None and price < args["min_price"]):
+        lo, hi = (price, price) if price is not None else (rng["min"], rng["max"])
+        if (args.get("max_price") is not None and lo > args["max_price"]) or (args.get("min_price") is not None and hi < args["min_price"]):
             dropped += 1; continue
-        products.append({"sku": sku, "name": prod.get("name") or r["title"], "price": price, "page": r["url_path"],
-                         "brand_slug": r["brand_slug"], "similarity": round(float(r["similarity"]), 3),
-                         "live": prod, "attributes": live.get("attributes", {})})
+        entry = {"sku": sku, "name": prod.get("name") or r["title"], "price": price, "page": r["url_path"],
+                 "brand_slug": r["brand_slug"], "similarity": round(float(r["similarity"]), 3),
+                 "live": prod, "attributes": live.get("attributes", {})}
+        if price is None:                                  # quote an option's price from options, never a single price
+            entry.update(price_range=rng, options=live.get("options", []))
+        products.append(entry)
         if len(products) == limit:
             break
 
