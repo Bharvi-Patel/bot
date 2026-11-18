@@ -29,11 +29,11 @@ TOOL_DECLARATIONS: list[dict] = [
             "brand_slug": {**_STR, "description": "Slug returned by list_brands."},
             "min_price": _NUM,
             "max_price": _NUM,
-            "color": _STR,
-            "material": _STR,
+            "color": {**_STR, "description": "A color. Needs keyword. Only one of color, material or attribute_group per search."},
+            "material": {**_STR, "description": "A material. Needs keyword. Only one of color, material or attribute_group per search."},
             "attribute_group": {**_STR, "enum": list(ATTRIBUTE_GROUPS),
-                                "description": "Give together with attribute_value."},
-            "attribute_value": {**_STR, "description": "Exact value from list_attribute_values."},
+                                "description": "Give together with attribute_value, and with keyword."},
+            "attribute_value": {**_STR, "description": "Exact value from list_attribute_values (called with the same keyword)."},
             "max_width_in": {**_NUM, "description": "Widest the product may be, in inches."},
             "sort": {**_STR, "enum": list(SORTS)},
         },
@@ -78,10 +78,11 @@ TOOL_DECLARATIONS: list[dict] = [
     _tool("list_brands", "The brands the store carries, with their slugs. Takes no parameters."),
     _tool(
         "list_attribute_values",
-        "The values that exist for one attribute group (for example the exact color or bed size names), so you can "
-        "turn 'queen' into the catalog's own value before calling search_products.",
-        {"group": {**_STR, "enum": list(ATTRIBUTE_GROUPS)}},
-        ["group"],
+        "The values one attribute group (for example Color or Bed Size) has among the products that match a keyword, so you can "
+        "turn 'queen' into the catalog's own value before calling search_products. Not a store-wide list.",
+        {"group": {**_STR, "enum": list(ATTRIBUTE_GROUPS)},
+         "keyword": {**_STR, "description": "The product type, e.g. 'bed' or 'rug' (at least 2 letters)."}},
+        ["group", "keyword"],
     ),
     _tool(
         "get_shipping_options",

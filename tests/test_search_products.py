@@ -161,10 +161,8 @@ def test_the_brand_keyword_search_uses_the_brand_not_a_name_search():
     assert [p["sku"] for p in out["products"]] == ["A"]
 
 
-# ---------- filters the API cannot do yet ----------
-@pytest.mark.parametrize("args,word", [({"color": "Black"}, "color"), ({"material": "Oak"}, "material"),
-                                       ({"max_width_in": 80}, "size or width"),
-                                       ({"attribute_group": "Bed Size", "attribute_value": "Queen"}, "attribute")])
+# ---------- filters the API cannot do yet (only width and size limits now) ----------
+@pytest.mark.parametrize("args,word", [({"max_width_in": 80}, "size or width")])
 def test_unsupported_filters_are_refused_with_guidance(args, word):
     out = search_products({"keyword": "bed", **args}, client=CatalogClient(beds(2), brands=BRANDS))
     assert out["error"] == "unsupported_filter" and word in out["note"] and "Search again without it" in out["note"]
@@ -395,3 +393,71 @@ def test_a_one_letter_keyword_is_refused_without_searching():
 def test_a_one_letter_keyword_is_fine_with_a_category():
     c = CatalogClient(by_category={"beds": beds(3)})
     assert "error" not in search_products({"keyword": "a", "category_slug": "beds"}, client=c)
+
+
+# ---------- attribute filter (one at a time, ids found in the facets of a keyword search) ----------
+BED_SIZE = [{"group": "Bed Size", "values": [{"id": "u-queen", "name": "Queen"}, {"id": "u-king", "name": "King"}]}]
+COLOR = [{"group": "Color", "values": [{"id": "u-black", "name": "Black"}, {"id": "u-esp", "name": "Espresso Brown"}]}]
+
+
+def test_attribute_filter_sends_the_value_id_to_the_api():
+    c = CatalogClient(beds(3), brands=BRANDS, attributes=BED_SIZE)
+    out = search_products({"keyword": "bed", "attribute_group": "bed size", "attribute_value": "queen"}, client=c)
+    assert ("attributes", "bed") in c.calls and c.filters == [{"attribute_ids": ["u-queen"]}]
+    assert out["applied_filters"]["attribute"] == {"group": "Bed Size", "value": "Queen"}
+    assert "do not call these all" in out["attribute_note"]
+
+
+def test_color_and_material_are_shortcuts_for_their_groups():
+    c = CatalogClient(beds(3), brands=BRANDS, attributes=COLOR)
+    search_products({"keyword": "bed", "color": "Black"}, client=c)
+    assert c.filters == [{"attribute_ids": ["u-black"]}]
+
+
+def test_attribute_value_matches_ignoring_case_and_punctuation():
+    c = CatalogClient(beds(3), brands=BRANDS, attributes=COLOR)
+    search_products({"keyword": "bed", "color": "espresso-brown"}, client=c)
+    assert c.filters == [{"attribute_ids": ["u-esp"]}]
+
+
+def test_attribute_filter_goes_to_a_category_listing_too():
+    c = CatalogClient(by_category={"beds": beds(3)}, brands=BRANDS, attributes=BED_SIZE)
+    search_products({"keyword": "bed", "category_slug": "beds", "attribute_group": "Bed Size", "attribute_value": "King"}, client=c)
+    assert c.filters == [{"attribute_ids": ["u-king"]}]
+
+
+def test_unknown_attribute_value_lists_the_real_ones_and_searches_nothing():
+    c = CatalogClient(beds(3), brands=BRANDS, attributes=BED_SIZE)
+    out = search_products({"keyword": "bed", "attribute_group": "Bed Size", "attribute_value": "Cal King"}, client=c)
+    assert out["error"] == "unknown_attribute_value" and out["values"] == ["King", "Queen"]
+    assert c.filters == []
+
+
+def test_group_missing_for_the_keyword_searches_nothing_and_says_so():
+    c = CatalogClient(beds(3), brands=BRANDS, attributes=COLOR)
+    out = search_products({"keyword": "bed", "attribute_group": "Bed Size", "attribute_value": "Queen"}, client=c)
+    assert out["error"] == "attribute_not_available" and "not filtered by Bed Size" in out["note"] and c.filters == []
+
+
+def test_attribute_filter_without_a_keyword_is_refused():
+    c = CatalogClient(by_category={"beds": beds(3)}, brands=BRANDS, attributes=BED_SIZE)
+    out = search_products({"category_slug": "beds", "attribute_group": "Bed Size", "attribute_value": "Queen"}, client=c)
+    assert out["error"] == "attribute_filter_needs_keyword" and c.filters == []
+
+
+def test_one_letter_keyword_with_an_attribute_is_refused():
+    c = CatalogClient(by_category={"beds": beds(3)}, brands=BRANDS, attributes=BED_SIZE)
+    out = search_products({"keyword": "b", "category_slug": "beds", "color": "Black"}, client=c)
+    assert out["error"] == "keyword_too_short" and c.filters == []
+
+
+@pytest.mark.parametrize("args", [
+    {"color": "Black", "material": "Oak"},
+    {"color": "Black", "attribute_group": "Bed Size", "attribute_value": "Queen"},
+    {"material": "Oak", "attribute_group": "Bed Size", "attribute_value": "Queen"},
+])
+def test_two_attribute_filters_in_one_search_are_refused(args):
+    """The API treats several attribute ids as 'any of', so two would silently widen the results."""
+    c = CatalogClient(beds(3), brands=BRANDS, attributes=BED_SIZE + COLOR)
+    out = search_products({"keyword": "bed", **args}, client=c)
+    assert "only one of color, material" in out["error"] and c.calls == []

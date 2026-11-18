@@ -117,7 +117,7 @@ def test_declarations_match_the_tools_own_allowed_keys():
     assert decl["list_categories"] == lc.ALLOWED_KEYS
     assert decl["get_shipping_options"] == gso.ALLOWED_KEYS
     assert decl["search_policies"] == {"question", "source_types"}
-    assert decl["list_attribute_values"] == {"group"} and decl["check_inventory"] == {"sku"}
+    assert decl["list_attribute_values"] == {"group", "keyword"} and decl["check_inventory"] == {"sku"}
     assert decl["list_brands"] == set() and decl["get_store_info"] == set()
     assert decl["get_order_status"] == gos.ALLOWED_KEYS == {"order_number", "email"}
 

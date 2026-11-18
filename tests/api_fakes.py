@@ -28,13 +28,18 @@ class CatalogClient:
 
     PER_PAGE = 16
 
-    def __init__(self, products=None, by_category=None, brands=None, tree=None):
+    def __init__(self, products=None, by_category=None, brands=None, tree=None, attributes=None):
         self.products = list(products or [])
         self.by_category = by_category or {}
         self._brands = brands if brands is not None else []
         self._tree = tree or []
+        self._attributes = attributes or []   # facet groups: [{"group": "Bed Size", "values": [{"id": "u1", "name": "Queen"}]}]
         self.calls = []
         self.filters = []   # the API filters each search/category call was given, in call order
+
+    def attribute_options(self, query):
+        self.calls.append(("attributes", query))
+        return [dict(g) for g in self._attributes]
 
     def brands(self):
         self.calls.append(("brands",))

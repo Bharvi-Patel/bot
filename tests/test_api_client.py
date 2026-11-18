@@ -374,3 +374,33 @@ def test_bad_filter_values_are_refused_before_any_request(kwargs):
     with pytest.raises(ValueError):
         client.category_products("dining-room", **kwargs)
     assert t.requests == []
+
+
+# ---------- attribute filter and facets ----------
+
+def test_search_sends_one_attribute_id():
+    client, t = make(fixture("product_search"))
+    client.search_products("bed", attribute_ids=["67ace390fcb040008ecdc568b52e13f2"])
+    assert json.loads(t.requests[0].data) == {"q": "bed", "attribute_ids": ["67ace390fcb040008ecdc568b52e13f2"]}
+
+
+def test_category_request_sends_attribute_ids_with_the_paging_workaround():
+    client, t = make(fixture("category_products"))
+    client.category_products("bedroom-furniture-beds", attribute_ids=["67ace390fcb040008ecdc568b52e13f2"])
+    assert json.loads(t.requests[0].data) == {"attribute_ids": ["67ace390fcb040008ecdc568b52e13f2"], "price_range": {"from": 0}}
+
+
+@pytest.mark.parametrize("bad", ["not-a-list", [5], ["bad id"], [None]])
+def test_bad_attribute_ids_are_refused_before_any_request(bad):
+    client, t = make()
+    with pytest.raises(ValueError):
+        client.search_products("bed", attribute_ids=bad)
+    assert t.requests == []
+
+
+def test_attribute_options_carry_the_ids_the_filter_takes():
+    client, t = make(fixture("product_search"))
+    options = client.attribute_options("bed")
+    assert json.loads(t.requests[0].data) == {"q": "bed"}
+    group = next(g for g in options if g["group"] == "Bed Size")
+    assert {"id": "67ace390fcb040008ecdc568b52e13f2", "name": "Queen"} in group["values"]   # the id the real API filtered Queen by

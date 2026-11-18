@@ -53,11 +53,8 @@ ATTRIBUTE_GROUPS = [
     "Pattern", "Rug Size", "Shape", "Table Base", "Table Shape", "Table Top",
 ]
 
-# Filters the store API cannot be asked for yet (format unknown), keyed by the argument the model sends.
-UNSUPPORTED = {
-    "color": "color", "material": "material", "attribute_group": "attribute filters",
-    "attribute_value": "attribute filters", "max_width_in": "size or width limits",
-}
+# Filters the store API cannot be asked for yet, keyed by the argument the model sends.
+UNSUPPORTED = {"max_width_in": "size or width limits"}
 
 
 class ToolInputError(ValueError):
@@ -103,8 +100,19 @@ def _prepare(args: dict[str, Any]) -> dict[str, Any]:
     group, value = _text(args, "attribute_group"), _text(args, "attribute_value")
     if bool(group) != bool(value):
         raise ToolInputError("attribute_group and attribute_value must be given together")
-    if group and not any(g.lower() == group.lower() for g in ATTRIBUTE_GROUPS):
+    canonical = next((g for g in ATTRIBUTE_GROUPS if group and g.lower() == group.lower()), None)
+    if group and canonical is None:
         raise ToolInputError(f"attribute_group must be one of: {', '.join(ATTRIBUTE_GROUPS)}")
+    # color and material are shortcuts for the Color and Material groups. The API treats several attribute ids as
+    # "any of", so only one attribute filter can be used per search.
+    wanted_attrs = [(canonical, value)] if canonical else []
+    for arg, name in (("color", "Color"), ("material", "Material")):
+        if _text(args, arg):
+            wanted_attrs.append((name, _text(args, arg)))
+    if len(wanted_attrs) > 1:
+        raise ToolInputError("only one of color, material or attribute_group+attribute_value can be used per search. Apply the "
+                             "one that matters most, and tell the customer the other is not filtered.")
+    vals["attribute"] = wanted_attrs[0] if wanted_attrs else None
     if vals["sort"] not in SORTS:
         raise ToolInputError(f"sort must be one of: {', '.join(SORTS)}")
     lo, hi = vals["min_price"], vals["max_price"]
@@ -204,6 +212,28 @@ def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bo
     return {"kept": kept, "base_kept": base_kept, "varies": varies, "checked": checked, "total": total, "complete": complete}
 
 
+def _resolve_attribute(options: list[dict[str, Any]], group: str, wanted: str) -> dict[str, Any]:
+    """Find the uuid of (group, value) in the facets of a keyword search. Returns {"id", "group", "value"} or an error dict."""
+    def squash(t: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", t.lower())
+
+    found = next((g for g in options if isinstance(g.get("group"), str) and g["group"].lower() == group.lower()), None)
+    values = [x for x in (found or {}).get("values") or [] if x.get("id") and x.get("name")]
+    if not values:
+        return {"error": "attribute_not_available",
+                "note": (f"No product matching that keyword has {group} information in the store's data, so the search cannot "
+                         f"filter by {group}. Search again without it, tell the customer the results are not filtered by "
+                         f"{group}, and never say a product matches unless its name says so.")}
+    hit = next((x for x in values if x["name"].lower() == wanted.lower()), None) or \
+        next((x for x in values if squash(x["name"]) == squash(wanted)), None)
+    if hit is None:
+        return {"error": "unknown_attribute_value",
+                "note": f"'{wanted}' is not one of the {group} values for this keyword. Choose one of the values listed, "
+                        "or search without the filter and say the results are not filtered by it.",
+                "values": sorted({x["name"] for x in values}, key=str.lower)[:20]}
+    return {"id": hit["id"], "group": found["group"], "value": hit["name"]}
+
+
 def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
     """Tool entry point. Returns a JSON-friendly dict for the model."""
     try:
@@ -270,6 +300,21 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
         if hi is not None:
             api_filters["price_to"] = hi
 
+        attribute = None
+        if v["attribute"]:
+            # attribute values are found in the facets of a keyword search, so a keyword (or brand name) is needed
+            if not query:
+                return {"error": "attribute_filter_needs_keyword",
+                        "note": "An attribute filter needs a keyword for the product type (for example 'bed'). Search again with one."}
+            if len(query) < 2:
+                return {"error": "keyword_too_short",
+                        "note": "The search needs a keyword of at least 2 letters. Ask the customer what they are looking for."}
+            resolved = _resolve_attribute(client.attribute_options(query), *v["attribute"])
+            if "error" in resolved:
+                return resolved
+            api_filters["attribute_ids"] = [resolved["id"]]
+            attribute = {"group": resolved["group"], "value": resolved["value"]}
+
         need_all = sort in ("price_asc", "price_desc")
         fetched = _fetch(client, v, query, need_all, base_filter, price_ok, api_filters)
         window = None
@@ -302,8 +347,13 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
 
     result: dict[str, Any] = {"count": len(products), "products": products}
     applied = {k: args[k] for k in ("min_price", "max_price") if args.get(k) is not None}
+    if attribute:
+        applied["attribute"] = attribute
+        result["attribute_note"] = (f"Filtered by {attribute['group']} = {attribute['value']}: only products that carry this value in the "
+                                    "store's data are listed. A product can fit and be missing because only its name says so, so do "
+                                    "not call these all the matching products.")
     if applied:
-        result["applied_filters"] = applied                  # the price limits actually used, so the reply may state them
+        result["applied_filters"] = applied                  # the filters actually used, so the reply may state them
     result["sorted_by"] = "store order (not by name or price)" if sort == "name" else sort
     if window:
         result["searched"] = window
