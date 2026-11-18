@@ -13,7 +13,7 @@ class Fake:
     def __init__(self):
         self.listing = {"mattresses-and-bedding": ["m1"], "mattresses-by-size": ["m1", "m2"], "desks": ["d1"]}
         self.details = {
-            "m1": dict(slug="m1", sku="M1", name="Cloud Mattress", brand="Nectar", price=-0.01, price_varies=True,
+            "m1": dict(slug="m1", sku=None, name="Cloud Mattress", brand="Nectar", price=-0.01, price_varies=True,
                        short_description="Firm", description="<p>Soft</p>", special_features=None, dimensions={}, lifestyle=None,
                        categories=[{"slug": "mattresses-by-size", "name": "By Size"}],
                        options=[{"sku": "M1-Q", "slug": "m1-q", "price": 599.0, "attributes": {"Size": "Queen"}},
@@ -25,6 +25,9 @@ class Fake:
 
     def categories(self):
         return TREE
+
+    def brands(self):
+        return [{"slug": "acme", "name": "Acme Co"}]
 
     def category_products(self, slug, page=1):
         return {"products": [{"slug": s} for s in self.listing[slug]], "last_page": 1}
@@ -46,7 +49,8 @@ def test_ingest_indexes_option_priced_products_and_reports_skips():
     assert set(by) == {"m1", "d1"}
     assert by["m1"]["price"] == 599.0 and "Queen: $599.00" in by["m1"]["content"] and "King: $799.00" in by["m1"]["content"]
     assert by["m1"]["category_slugs"] == ["mattresses-and-bedding", "mattresses-by-size"]   # ancestors included
-    assert by["d1"]["brand_slug"] == "acme-co" and by["d1"]["price"] == 250.0
+    assert by["m1"]["brand_slug"] == "nectar" and "SKU: M1-Q, M1-K" in by["m1"]["content"]   # fallback slug; option SKUs
+    assert by["d1"]["brand_slug"] == "acme" and by["d1"]["price"] == 250.0
     assert [s for s, _ in skipped] == ["m2"] and notes and "ghost" in notes[0]
 
 

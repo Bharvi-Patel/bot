@@ -74,8 +74,9 @@ def option_prices(detail: dict) -> list[float]:
     return [o["price"] for o in detail.get("options") or [] if isinstance(o.get("price"), (int, float)) and o["price"] > 0]
 
 
-def product_row(detail: dict, by_slug: dict[str, dict], url_template: str = URL) -> tuple[dict | None, str | None]:
-    """(row, None) or (None, reason it was left out)."""
+def product_row(detail: dict, by_slug: dict[str, dict], url_template: str = URL,
+                brand_slugs: dict[str, str] | None = None) -> tuple[dict | None, str | None]:
+    """(row, None) or (None, reason it was left out). brand_slugs maps brand name (lowercase) to the API's brand slug."""
     if not detail.get("name"):
         return None, "no name"
     prices = option_prices(detail)
@@ -96,7 +97,9 @@ def product_row(detail: dict, by_slug: dict[str, dict], url_template: str = URL)
         for group, value in (o.get("attributes") or {}).items():
             attrs.setdefault(group, []).append(value)
     dims = detail.get("dimensions") or {}
-    p = {"name": detail["name"], "brand_name": detail.get("brand"), "sku": detail.get("sku"), "lifestyle": detail.get("lifestyle"),
+    # A product priced by option has no SKU of its own: show its options' SKUs so a SKU question can still find it.
+    sku = detail.get("sku") or ", ".join(str(o["sku"]) for o in (detail.get("options") or [])[:4] if o.get("sku")) or "n/a"
+    p = {"name": detail["name"], "brand_name": detail.get("brand"), "sku": sku, "lifestyle": detail.get("lifestyle"),
          "short_description": detail.get("short_description"), "full_description": detail.get("description"),
          "special_features": detail.get("special_features"),
          "width": dims.get("width"), "depth": dims.get("depth"), "height": dims.get("height")}
@@ -108,7 +111,9 @@ def product_row(detail: dict, by_slug: dict[str, dict], url_template: str = URL)
                 label = ", ".join(f"{v}" for v in (o.get("attributes") or {}).values()) or str(o.get("sku") or "option")
                 lines.append(f"{label}: ${o['price']:,.2f}")
         content += "\nPrice by option: " + "; ".join(lines)
-    brand_slug = (detail.get("brand") or "").strip().lower().replace(" ", "-") or None
+    # The API's own brand slug (e.g. "foa"), so the brand filter matches list_brands. Slugified name only as a fallback.
+    name = (detail.get("brand") or "").strip().lower()
+    brand_slug = (brand_slugs or {}).get(name) or name.replace(" ", "-") or None
     row = dict(source_type="product", source_key=detail["slug"], title=detail["name"], heading=detail["name"],
                url_path=url_template.format(slug=detail["slug"]), brand_slug=brand_slug, category_slugs=slugs,
                price=float(price), content=content, content_hash=content_hash(content), embedding=None)
@@ -139,6 +144,12 @@ def ingest(client, roots: list[str], keywords: list[str] = (), limit: int = 0,
     chosen, missing, scope = scope_from_tree(tree, list(roots), list(keywords))
     if notes is not None and missing:
         notes.append(f"unknown category slug(s): {missing}")
+    try:
+        brand_slugs = {(b.get("name") or "").strip().lower(): b["slug"] for b in client.brands() if b.get("slug")}
+    except Exception as exc:
+        brand_slugs = {}
+        if notes is not None:
+            notes.append(f"brands lookup failed ({exc}); brand slugs are guessed from names")
     rows = []
     for slug in listing_slugs(client, scope, limit):
         try:
@@ -147,7 +158,7 @@ def ingest(client, roots: list[str], keywords: list[str] = (), limit: int = 0,
             if skipped is not None:
                 skipped.append((slug, f"detail call failed: {exc}"))
             continue
-        row, why = product_row(detail, by_slug)
+        row, why = product_row(detail, by_slug, brand_slugs=brand_slugs)
         if row:
             rows.append(row)
         elif skipped is not None:
