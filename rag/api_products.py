@@ -186,9 +186,13 @@ def main(argv: list[str] | None = None) -> None:
     with open("products.jsonl", "w", encoding="utf8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    roots = sorted({s for r in rows for s in (r["category_slugs"] or [])} & set(args.slug)) or sorted(args.slug)
+    # sync_products.py deletes indexed products inside these roots that are missing from products.jsonl. A trial run
+    # (--limit) or a keyword-only run holds only part of a category, so it gets NO roots and can never delete anything.
+    roots = [] if (args.limit or args.keyword) else sorted(args.slug)
     json.dump({"roots": roots}, open("products_scope.json", "w"))
     print(f"wrote {len(rows)} products for store {args.store_uuid}")
+    if not roots:
+        print("  NOTE: partial run, so the scope is empty: sync_products will add and update but remove nothing.")
     for n in notes:
         print("  NOTE:", n)
     for slug, why in skipped:
