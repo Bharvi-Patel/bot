@@ -30,7 +30,7 @@ class Fake:
         return [{"slug": "acme", "name": "Acme Co"}]
 
     def category_products(self, slug, page=1):
-        return {"products": [{"slug": s} for s in self.listing[slug]], "last_page": 1}
+        return {"products": [{"slug": s} for s in self.listing[slug]], "last_page": 1, "total": len(self.listing[slug])}
 
     def product_detail(self, slug):
         return self.details[slug]
@@ -51,7 +51,8 @@ def test_ingest_indexes_option_priced_products_and_reports_skips():
     assert by["m1"]["category_slugs"] == ["mattresses-and-bedding", "mattresses-by-size"]   # ancestors included
     assert by["m1"]["brand_slug"] == "nectar" and "SKU: M1-Q, M1-K" in by["m1"]["content"]   # fallback slug; option SKUs
     assert by["d1"]["brand_slug"] == "acme" and by["d1"]["price"] == 250.0
-    assert [s for s, _ in skipped] == ["m2"] and notes and "ghost" in notes[0]
+    assert [s for s, _ in skipped] == ["m2"] and any("ghost" in n for n in notes)
+    assert any("category desks: API total 1, collected 1" in n for n in notes)
 
 
 def test_limit_stops_early():
