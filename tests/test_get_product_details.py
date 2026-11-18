@@ -202,3 +202,10 @@ def test_sku_search_finds_the_exact_sku_even_with_other_matches_listed():
     client, urls = api(search_fixture="sku_search")
     out = get_product_details({"sku": "2261brn-s"}, client=client)
     assert out["found"] is True and urls[1] == "http://x/product/blanche-side-chair-brown-2261brn-s"
+
+
+def test_without_categories_the_tree_is_not_requested_and_titles_are_used():
+    client, urls = api()
+    out = get_product_details({"slug": DETAIL_SLUG}, client=client, with_categories=False)
+    assert out["found"] and sorted(out["categories"]) == ["Dining Room", "Dining Room Chairs"]
+    assert urls == [f"http://x/product/{DETAIL_SLUG}"]        # one API call, no /categories/tree

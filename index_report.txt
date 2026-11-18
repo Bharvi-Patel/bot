@@ -1,0 +1,150 @@
+
+=== 1. rows per store and type (no_embedding should be 0)
+  store_uuid | source_type | rows | no_embedding | avg_chars
+  56695974416925887669406417382718 | blog | 1 | 0 | 1211
+  56695974416925887669406417382718 | brand_info | 33 | 0 | 1571
+  56695974416925887669406417382718 | faq | 2 | 0 | 125
+  56695974416925887669406417382718 | guide | 6 | 0 | 1346
+  56695974416925887669406417382718 | policy | 9 | 0 | 1472
+  56695974416925887669406417382718 | product | 770 | 0 | 586
+
+=== 2. embedding size
+  dims
+  768
+
+=== 3. product rows: quality checks, per store
+  store_uuid | products | no_price | min_price | max_price | no_sku_line | odd_url_path | no_brand | no_categories | newest
+  56695974416925887669406417382718 | 770 | 0 | 20.66 | 14398.00 | 0 | 0 | 0 | 0 | 2026-10-02 03:59:37.825341+00:00
+
+=== 4. category slugs used by product rows (slug | how many products)
+  store_uuid | category_slug | products
+  56695974416925887669406417382718 | mattresses-and-bedding | 569
+  56695974416925887669406417382718 | mattresses-and-bedding-mattresses-by-size | 432
+  56695974416925887669406417382718 | mattresses-and-bedding-mattresses-and-bases-by-type | 254
+  56695974416925887669406417382718 | home-office | 165
+  56695974416925887669406417382718 | home-office-and-study-desks | 165
+  56695974416925887669406417382718 | home-office-home-office-and-study | 165
+  56695974416925887669406417382718 | mattresses-and-bases-by-type-hybrid | 129
+  56695974416925887669406417382718 | mattresses-by-size-queen | 72
+  56695974416925887669406417382718 | mattresses-by-size-california-king | 69
+  56695974416925887669406417382718 | mattresses-by-size-king | 67
+  56695974416925887669406417382718 | mattresses-by-size-full | 65
+  56695974416925887669406417382718 | mattresses-and-bases-by-type-foundations-and-frames | 62
+  56695974416925887669406417382718 | mattresses-by-size-twin-xl | 62
+  56695974416925887669406417382718 | living-room | 47
+  56695974416925887669406417382718 | mattresses-and-bases-by-type-power-bases | 40
+  56695974416925887669406417382718 | living-room-sofas-and-seating | 37
+  56695974416925887669406417382718 | sofas-and-seating-sofas | 34
+  56695974416925887669406417382718 | rugs-and-decor | 20
+  56695974416925887669406417382718 | home-office-and-study-bookcases | 19
+  56695974416925887669406417382718 | mattresses-by-size-twin | 19
+  56695974416925887669406417382718 | bedroom | 18
+  56695974416925887669406417382718 | bedroom-bedroom-furniture | 18
+  56695974416925887669406417382718 | entryway-furniture-tables | 18
+  56695974416925887669406417382718 | living-room-entryway-furniture | 18
+  56695974416925887669406417382718 | living-room-tables | 18
+  56695974416925887669406417382718 | mattresses-and-bases-by-type-innerspring | 16
+  56695974416925887669406417382718 | rugs-and-decor-home-accents | 15
+  56695974416925887669406417382718 | bedding-accessories-bed-pillows | 14
+  56695974416925887669406417382718 | mattresses-and-bedding-bedding-accessories | 14
+  56695974416925887669406417382718 | bedroom-furniture-vanities | 12
+  56695974416925887669406417382718 | living-room-entertainment | 12
+  56695974416925887669406417382718 | tables-coffee-tables | 12
+  56695974416925887669406417382718 | home-accents-accent-furniture | 11
+  56695974416925887669406417382718 | dining-room | 10
+  56695974416925887669406417382718 | mattresses-and-bedding-sets | 10
+  56695974416925887669406417382718 | tables-end-and-side-tables | 10
+  56695974416925887669406417382718 | bedroom-furniture-mirrored-dressers | 9
+  56695974416925887669406417382718 | dining-room-dining-furniture | 9
+  56695974416925887669406417382718 | entertainment-tv-stands-and-media-centers | 9
+  56695974416925887669406417382718 | bedroom-furniture-dressers-and-chests | 8
+  56695974416925887669406417382718 | bedroom-furniture-nightstands | 8
+  56695974416925887669406417382718 | dining-furniture-dining-room-chairs | 8
+  56695974416925887669406417382718 | dining-furniture-dining-room-tables | 8
+  56695974416925887669406417382718 | tables-console-tables | 8
+  56695974416925887669406417382718 | mattresses-and-bases-by-type-memory-foam | 7
+  56695974416925887669406417382718 | sofas-and-seating-loveseats | 7
+  56695974416925887669406417382718 | bar-furniture-bar-stools | 6
+  56695974416925887669406417382718 | dining-room-bar-furniture | 6
+  56695974416925887669406417382718 | entertainment-mantels-and-fireplaces | 6
+  56695974416925887669406417382718 | home-office-and-study-office-chairs | 6
+  56695974416925887669406417382718 | kids-and-nursery | 6
+  56695974416925887669406417382718 | kids-and-nursery-kids-furniture | 6
+  56695974416925887669406417382718 | rugs-and-decor-lighting | 6
+  56695974416925887669406417382718 | sofas-and-seating-living-room-chairs | 6
+  56695974416925887669406417382718 | sofas-and-seating-ottomans | 6
+  56695974416925887669406417382718 | bedroom-furniture-beds | 5
+  56695974416925887669406417382718 | lighting-desk-lamps | 5
+  56695974416925887669406417382718 | home-accents-storage-and-organization | 4
+  56695974416925887669406417382718 | kids-furniture-bunk-beds | 4
+  56695974416925887669406417382718 | pillows-accent-pillows | 4
+  56695974416925887669406417382718 | rugs-and-decor-pillows | 4
+  56695974416925887669406417382718 | tables-accent-tables | 4
+  56695974416925887669406417382718 | home-office-and-study-office-storage | 3
+  56695974416925887669406417382718 | sofas-and-seating-recliners | 3
+  56695974416925887669406417382718 | dining-furniture-dining-benches | 2
+  56695974416925887669406417382718 | dining-furniture-dining-storage | 2
+  56695974416925887669406417382718 | kids-furniture-beds | 2
+  56695974416925887669406417382718 | rugs-and-decor-wall-decor | 2
+  56695974416925887669406417382718 | sofas-and-seating-sectional-sofas | 2
+  56695974416925887669406417382718 | wall-decor-mirrors | 2
+  56695974416925887669406417382718 | bar-furniture-bar-sets | 1
+  56695974416925887669406417382718 | dining-room-sets | 1
+  56695974416925887669406417382718 | kids-furniture-desks | 1
+  56695974416925887669406417382718 | lighting-table-lamps | 1
+
+=== 5. brand slugs used by product rows
+  store_uuid | brand_slug | products
+  56695974416925887669406417382718 | beautyrest | 267
+  56695974416925887669406417382718 | foa | 170
+  56695974416925887669406417382718 | coaster | 132
+  56695974416925887669406417382718 | acme | 96
+  56695974416925887669406417382718 | sierra-sleep-by-ashley | 48
+  56695974416925887669406417382718 | signature-design-by-ashley | 23
+  56695974416925887669406417382718 | happy-home | 14
+  56695974416925887669406417382718 | ashley-sleep | 7
+  56695974416925887669406417382718 | ottomanson | 7
+  56695974416925887669406417382718 | nectar | 5
+  56695974416925887669406417382718 | dreamcloud | 1
+
+=== 6. how many products have 'mattress' in the title (the API's mattresses have no single price)
+  store_uuid | mattress_titles
+  56695974416925887669406417382718 | 102
+
+=== 7. sample of 6 products (title | price | page | start of text)
+  title | price | url_path | start_of_text
+  Havana Sofa - Beige | 792.00 | /product/havana-sofa-beige | Havana Sofa - Beige | Brand: Ottomanson | Categories: Living Room | Sofas and Seating | Sofas | SKU: HVN-BE-SB | Dimensions (in): 27.6 D x 37.4 
+  Ilse | 2197.80 | /product/ilse-sm2675-sf | Ilse | Brand: Furniture Of America | Categories: Living Room | Sofas and Seating | Sofas | SKU: SM2675-SF | Dimensions (in): 40 W x 38 H | Summary
+  Bowen Upholstered Track Arm Tufted Sofa Beige | 578.60 | /product/bowen-upholstered-track-arm-tufted-sofa-beige | Bowen Upholstered Track Arm Tufted Sofa Beige | Brand: Coaster | Categories: Living Room | Sofas and Seating | Sofas | SKU: 506785 | Summary: Bo
+  Hannes Sofa with 2 Pillows | 961.40 | /product/hannes-sofa-with-2-pillows | Hannes Sofa with 2 Pillows | Brand: Acme | Categories: Living Room | Sofas and Seating | Sofas | SKU: Hannes | Dimensions (in): 86 W x 39 D x 39
+  Harstad | 2197.80 | /product/harstad-cm9983lb-sf | Harstad | Brand: Furniture Of America | Categories: Living Room | Sofas and Seating | Sofas | SKU: CM9983LB-SF | Dimensions (in): 93 W x 40 D x 
+  Moretaine | 657.80 | /product/moretaine-sl6932bk-sf-pk | Moretaine | Brand: Furniture Of America | Categories: Living Room | Sofas and Seating | Sofas | SKU: SL6932BK-SF-PK | Summary: Moretaine | Details
+
+=== 8. one full product document
+  title | url_path | brand_slug | category_slugs | price | content
+  Havana Sofa - Beige | /product/havana-sofa-beige | ottomanson | ['living-room', 'living-room-sofas-and-seating', 'sofas-and-seating-sofas'] | 792.00 | Havana Sofa - Beige | Brand: Ottomanson | Categories: Living Room | Sofas and Seating | Sofas | SKU: HVN-BE-SB | Dimensions (in): 27.6 D x 37.4 H | Summary: Havana Sofa - Beige | Details: Rest with the best in the comfort of your family and friends. We welcome you to try out our new Havana furniture collection in order to achieve the most optimal quality possible. Fashion and function coalesce for optimal versatility, making this furniture suitable for any space and existing decor. The classy clean-lined upholstery is available in a rich color palette for every type of aesthetic. These elegant furniture pieces feature hidden storage compartments for your extra messy items, blankets, or even cluttered toys from your kids & pets. This functional set will instantly turn any room into a guest room. Unfolding these furniture items into sleeping position has been made easy, simply lift the seat part and click-clack the backrest allowing for a flat position, which will also come in handy if you just feel too tired or lazy to go to bed after watching some TV. For ease of assembly, please refer to the assembly documents provided.
+
+=== 9. policy, guide, FAQ and brand pages (chunks per source)
+  store_uuid | source_type | source_key | chunks | newest
+  56695974416925887669406417382718 | blog | best-sofa-designs-for-small-living-rooms | 1 | 2026-05-12 06:22:46+00:00
+  56695974416925887669406417382718 | brand_info | ashley-sleep | 5 | 2026-04-28 12:44:25+00:00
+  56695974416925887669406417382718 | brand_info | dreamcloud | 9 | 2026-04-28 14:40:47+00:00
+  56695974416925887669406417382718 | brand_info | nectar | 9 | 2026-04-27 04:59:15+00:00
+  56695974416925887669406417382718 | brand_info | sierra-sleep | 10 | 2026-04-28 16:24:47+00:00
+  56695974416925887669406417382718 | faq | is-online-payment-secure | 1 | 2026-05-25 12:19:52+00:00
+  56695974416925887669406417382718 | faq | what-payment-methods-do-you-accept | 1 | 2026-05-25 12:18:58+00:00
+  56695974416925887669406417382718 | guide | about-us | 2 | 2025-12-11 21:22:19+00:00
+  56695974416925887669406417382718 | guide | contact-us | 1 | 2025-12-11 21:22:09+00:00
+  56695974416925887669406417382718 | guide | mattress-buying-guide | 3 | 2026-06-07 11:01:33+00:00
+  56695974416925887669406417382718 | policy | financing | 3 | 2026-06-22 14:48:17+00:00
+  56695974416925887669406417382718 | policy | privacy-policy | 3 | 2026-04-09 06:59:13+00:00
+  56695974416925887669406417382718 | policy | terms-and-conditions | 2 | 2025-12-11 21:22:31+00:00
+  56695974416925887669406417382718 | policy | warranty-information | 1 | 2026-04-22 14:08:28+00:00
+
+=== 10. FAQ rows (question | start of answer)
+  store_uuid | title | start_of_answer
+  56695974416925887669406417382718 | Is online payment secure? | Is online payment secure? |  | Yes, all transactions are protected with secure encryption and trusted payment gateways.
+  56695974416925887669406417382718 | What payment methods do you accept? | What payment methods do you accept? |  | We accept credit/debit cards, UPI, net banking, wallets, and cash on delivery for eligible orders.
+
+=== 11. leftovers that should not be in page text
+  (no rows)

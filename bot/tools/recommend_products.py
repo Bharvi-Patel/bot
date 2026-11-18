@@ -1,10 +1,11 @@
-"""recommend_products: semantic product finder = "RAG finds it, SQL confirms it" (data map 5.4, 5.5).
+"""recommend_products: semantic product finder = "RAG finds it, the store API confirms it" (data map 5.4, 5.5).
 
 1. Hybrid search over the product documents in rag_chunks (vector + Postgres full-text, merged), with the hard filters
    the model extracted (max/min price, brand, category) applied in the query as metadata filters.
-2. Every candidate is then re-read from live SQL with get_product_details. The name and price the bot may quote come ONLY
-   from that live read. Products that no longer exist are dropped, and the price filters are checked again on the live price.
-Reads rag_chunks (Postgres, RAG_DB_URL) and, through get_product_details, the read-only vw_chat_* views.
+2. Every candidate is then re-read live from the store API with get_product_details. The name and price the bot may quote
+   come ONLY from that live read. Products that no longer exist are dropped, and the price filters are checked again on
+   the live price.
+Reads rag_chunks (Postgres, RAG_DB_URL) and, through get_product_details, the store's API. No MySQL.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ log = logging.getLogger(__name__)
 
 CUTOFF = float(os.environ.get("SJ_RAG_PRODUCT_CUTOFF", "0.55"))     # tune on the evaluation set
 FETCH = 12           # candidates per search
-CANDIDATES = 10      # after merging, how many get the live SQL check
+CANDIDATES = 10      # after merging, how many get the live check
 DEFAULT_LIMIT, MAX_LIMIT = 5, 8
 ALLOWED = {"query", "max_price", "min_price", "brand_slug", "category_slug", "limit"}
 
@@ -46,6 +47,15 @@ def _filters(a: dict) -> tuple[str, list]:
     if a.get("brand_slug"): sql += " AND brand_slug = %s"; params.append(a["brand_slug"])
     if a.get("category_slug"): sql += " AND %s = ANY(category_slugs)"; params.append(a["category_slug"])
     return sql, params
+
+
+_SLUG_PATH = re.compile(r"^/product/([A-Za-z0-9][A-Za-z0-9_-]{0,200})$")
+
+
+def _slug(url_path: str | None) -> str | None:
+    """The product slug when the index row's page is /product/<slug> (the route build_products writes)."""
+    m = _SLUG_PATH.match(url_path or "")
+    return m.group(1) if m else None
 
 
 def _sku(content: str) -> str | None:
@@ -79,11 +89,21 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
         if embed_query is None:
             from bot.embeddings import embed_query as default_embed
             embed_query = default_embed
-        if confirm is None:
+        custom_confirm = confirm
+        if custom_confirm is None:
             from bot.tools.get_product_details import get_product_details
 
-            def confirm(a):                               # the live check reads THIS store's API, not the default store
-                return get_product_details(a, ctx=ctx)
+            def live_check(sku, url_path):                # reads THIS store's API, not the default store
+                slug = _slug(url_path)
+                if slug:                                  # one API call; the SKU must match, so a wrong slug cannot swap products
+                    got = get_product_details({"slug": slug}, ctx=ctx, with_categories=False)
+                    prod = got.get("product") if got.get("found") else None
+                    if prod and str(prod.get("sku") or "").lower() == sku.lower():
+                        return got
+                return get_product_details({"sku": sku}, ctx=ctx, with_categories=False)   # slower: searches for the SKU first
+        else:
+            def live_check(sku, url_path):
+                return custom_confirm({"sku": sku})
         run_query = run_query or _default_run_query
         vec = _vector_literal(embed_query(query))
         fsql, fparams = _filters(args)
@@ -104,7 +124,7 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
     for r in candidates:                               # the store API confirms it
         sku = _sku(r["content"])
         try:
-            live = confirm({"sku": sku}) if sku else {"found": False}
+            live = live_check(sku, r["url_path"]) if sku else {"found": False}
         except Exception:
             log.exception("live check failed for %s", sku)
             live = {"found": False}

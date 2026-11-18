@@ -96,7 +96,9 @@ OPTIONS_NOTE = (
 )
 
 
-def get_product_details(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
+def get_product_details(args: dict[str, Any], client: ApiClient | None = None, ctx=None, *, with_categories: bool = True) -> dict[str, Any]:
+    """with_categories=False skips the category-tree call (full paths); callers that only need price and name (the
+    recommendation check) use it, so one product costs one API call instead of two."""
     try:
         unknown = set(args) - ALLOWED_KEYS
         if unknown:
@@ -120,11 +122,14 @@ def get_product_details(args: dict[str, Any], client: ApiClient | None = None, c
             if exc.status == 404:
                 return not_found
             raise
-        try:
-            tree = rows_from_tree(client.categories())
-            categories = _category_paths(tree, {c["slug"] for c in d["categories"]})
-        except ApiError:  # the product is still usable without full category paths
-            categories = [c["name"] for c in d["categories"] if c.get("name")][:MAX_CATEGORY_PATHS]
+        titles = [c["name"] for c in d["categories"] if c.get("name")][:MAX_CATEGORY_PATHS]
+        categories = titles
+        if with_categories:
+            try:
+                tree = rows_from_tree(client.categories())
+                categories = _category_paths(tree, {c["slug"] for c in d["categories"]})
+            except ApiError:  # the product is still usable without full category paths
+                pass
     except ApiError:
         return {"error": "Product details are not available right now. Do not guess product details; offer the store's contact details."}
 

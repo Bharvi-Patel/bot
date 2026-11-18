@@ -73,7 +73,8 @@ def test_the_live_check_is_made_for_the_same_store(monkeypatch):
     asked = []
     monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, **k: asked.append((a, getattr(ctx, "store_uuid", None))) or {"found": False})
     recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8)]), embed_query=emb, ctx=SimpleNamespace(store_uuid="store-b"))
-    assert asked == [({"sku": "SKU1"}, "store-b")]
+    # the index row's page is /product/s1, so the slug is tried first; it found nothing, so the SKU is tried next
+    assert asked == [({"slug": "s1"}, "store-b"), ({"sku": "SKU1"}, "store-b")]
 
 
 def test_no_store_means_no_recommendations(monkeypatch):
@@ -124,3 +125,30 @@ def test_category_tree_helpers():
     scope, missing = descendants(cats, ["sofas", "nope"])
     assert sorted(c["slug"] for c in scope) == ["sectionals", "sofas"] and missing == ["nope"]
     assert slugs_with_ancestors("c", {c["category_uuid"]: c for c in cats}, {c["category_id"]: c for c in cats}) == ["sectionals", "sofas", "seating"]
+
+
+def test_live_check_uses_one_api_call_per_product_and_no_category_tree(monkeypatch):
+    import bot.tools.get_product_details as gpd
+    calls = []
+    monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, with_categories=True, **k: calls.append((a, with_categories)) or
+                        {"found": True, "product": {"name": "Sofa 1", "price": 100.0, "sku": "SKU1"}})
+    out = recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8)]), embed_query=emb)
+    assert out["count"] == 1 and calls == [({"slug": "s1"}, False)]
+
+
+def test_a_slug_that_belongs_to_another_product_is_not_trusted(monkeypatch):
+    import bot.tools.get_product_details as gpd
+    answers = {"s1": {"found": True, "product": {"name": "Other Sofa", "price": 100.0, "sku": "OTHER"}},
+               "SKU1": {"found": True, "product": {"name": "Sofa 1", "price": 120.0, "sku": "SKU1"}}}
+    monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, **k: answers[a.get("slug") or a.get("sku")])
+    out = recommend_products({"query": "sofa"}, run_query=runner([doc(1, 0.8)]), embed_query=emb)
+    assert out["products"][0]["name"] == "Sofa 1" and out["products"][0]["price"] == 120.0
+
+
+def test_a_page_that_is_not_a_product_route_goes_straight_to_the_sku(monkeypatch):
+    import bot.tools.get_product_details as gpd
+    asked = []
+    row = {**doc(1, 0.8), "url_path": "/shop/sofa-1?ref=x"}
+    monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, **k: asked.append(a) or {"found": False})
+    recommend_products({"query": "sofa"}, run_query=runner([row]), embed_query=emb)
+    assert asked == [{"sku": "SKU1"}]

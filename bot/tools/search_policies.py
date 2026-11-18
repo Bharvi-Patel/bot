@@ -7,7 +7,7 @@ Hybrid search over the pgvector table rag_chunks:
   4. anything below the cosine cutoff is dropped; if nothing is left, found=False and the bot must not answer from RAG
 
 Reads only rag_chunks, in the separate Postgres (RAG_DB_URL). It never touches the shop's MySQL database.
-Never returns prices, stock or delivery dates from this text: those come from SQL tools.
+Never returns prices, stock or delivery dates from this text: those come from the product and order tools.
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ KEYWORD_SQL = (
 NOTE_FOUND = (
     "Answer ONLY from these chunks. Quote policy text faithfully and name the page it came from "
     "(for example 'According to our Returns page ...'). Do not give prices, stock or delivery dates from this text: "
-    "use the SQL tools for those. No medical claims. If the chunks do not fully answer the question, say what they do "
+    "use the product and order tools for those. No medical claims. If the chunks do not fully answer the question, say what they do "
     "say and point the customer to the store phone or email (get_store_info)."
 )
 WEAK_MATCH = 0.65   # best chunk below this: the pages are only loosely related to the question
