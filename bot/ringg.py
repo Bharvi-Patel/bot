@@ -105,35 +105,80 @@ assert "get_order_status" not in VOICE_TOOLS
 
 _NUM_ARGS = ("min_price", "max_price", "max_width_in")
 _INT_ARGS = ("limit",)
+_BLANK_WORDS = frozenset({
+    "", "null", "none", "nil", "n/a", "na", "any", "all", "unknown",
+    "undefined", "unspecified", "not specified", "not_specified",
+    "default", "-", "--", "*", "false", "0", "empty", "no",
+})
 
 
 def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Ringg sends every configured Dynamic Row in the JSON body, with "" / "null" / 0 for optional rows the model left
-    blank, and sometimes sends integer/decimal rows as strings ("500"). Drop blank optional rows and turn numeric
-    strings into numbers before handing the dict to the store tools."""
+    """Ringg sends every configured Dynamic Row in the JSON body, often with "", "null", "any", "N/A", "none" or 0 for
+    optional rows the model did not need, and sometimes sends integer/decimal rows as strings ("500") or sort as
+    "name_asc". Drop blank/placeholder optional rows, coerce numeric strings, and resolve mutually-exclusive rows
+    before handing the dict to the store tools."""
+    from bot.tools.search_products import ATTRIBUTE_GROUPS
+
     out: dict[str, Any] = {}
     for k, v in args.items():
-        if v is None:
+        if v is None or isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            if k in _NUM_ARGS or k in _INT_ARGS:
+                if v <= 0:
+                    continue
+                out[k] = int(v) if k in _INT_ARGS else v
+            else:
+                out[k] = v
             continue
         if isinstance(v, str):
             s = v.strip()
-            if not s or s.lower() in ("null", "none"):
+            if s.lower() in _BLANK_WORDS:
                 continue
-            if k in _INT_ARGS and re.fullmatch(r"-?\d+", s):
-                v = int(s)
-            elif k in _NUM_ARGS and re.fullmatch(r"-?\d+", s):
-                v = int(s)
-            elif k in _NUM_ARGS and re.fullmatch(r"-?\d+\.\d+", s):
-                v = float(s)
-            else:
-                if k == "sort" and s in ("name_asc", "default"):
-                    s = "name"
-                out[k] = s
+            if k in _INT_ARGS:
+                if re.fullmatch(r"-?\d+", s):
+                    val = int(s)
+                    if val > 0:
+                        out[k] = val
                 continue
-        if k in (*_NUM_ARGS, *_INT_ARGS) and not isinstance(v, bool) and isinstance(v, (int, float)) and v == 0:
+            if k in _NUM_ARGS:
+                if re.fullmatch(r"-?\d+(?:\.\d+)?", s):
+                    val_f = float(s) if "." in s else int(s)
+                    if val_f > 0:
+                        out[k] = val_f
+                continue
+            out[k] = s
             continue
         out[k] = v
+
+    if "sort" in out and out["sort"] not in ("price_asc", "price_desc"):
+        out.pop("sort", None)
+
+    if "parent_slug" in out and "keyword" in out:
+        out.pop("parent_slug", None)
+
+    group = out.get("attribute_group")
+    valid_groups = {g.lower() for g in ATTRIBUTE_GROUPS}
+    if not group or not out.get("attribute_value") or not isinstance(group, str) or group.lower() not in valid_groups:
+        out.pop("attribute_group", None)
+        out.pop("attribute_value", None)
+
+    if "color" in out:
+        out.pop("material", None)
+        out.pop("attribute_group", None)
+        out.pop("attribute_value", None)
+    elif "material" in out:
+        out.pop("attribute_group", None)
+        out.pop("attribute_value", None)
+
+    if not out.get("keyword") and not out.get("brand_slug"):
+        out.pop("color", None)
+        out.pop("material", None)
+        out.pop("attribute_group", None)
+        out.pop("attribute_value", None)
+
     return out
+
 
 
 

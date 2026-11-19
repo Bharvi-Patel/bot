@@ -319,7 +319,28 @@ def test_clean_tool_args_drops_blank_rows_and_coerces_numeric_strings():
     assert ringg.clean_tool_args({"keyword": "sofa", "max_price": ""}) == {"keyword": "sofa"}
     assert ringg.clean_tool_args({"keyword": "sofa", "min_price": 0, "max_width_in": 0, "sort": "name_asc"}) == {
         "keyword": "sofa",
-        "sort": "name",
     }
+    assert ringg.clean_tool_args({
+        "category_slug": "living-room-sofas",
+        "max_price": 800,
+        "color": "any",
+        "material": "N/A",
+        "attribute_group": "none",
+        "attribute_value": "none",
+    }) == {
+        "category_slug": "living-room-sofas",
+        "max_price": 800,
+    }
+    assert ringg.clean_tool_args({
+        "keyword": "sofa",
+        "color": "blue",
+        "material": "fabric",
+        "attribute_group": "Bed Size",
+        "attribute_value": "Queen",
+    }) == {
+        "keyword": "sofa",
+        "color": "blue",
+    }
+
 
 
