@@ -30,6 +30,20 @@ Funnel events (bot/events.py): when BOT_EVENTS_DIR is set, every chat turn that 
 event line (counts, tool names and outcome; never any customer text). The caller may send X-Conversation-Id (letters,
 digits . _ - up to 64) so turns of one conversation can be grouped; without it the field is empty.
 
+POST /webhooks/ringg  (Ringg.AI call events; see bot/ringg.py)
+  Ringg posts here directly, so it does not use X-Bot-Key: it sends X-Webhook-Secret (RINGG_WEBHOOK_SECRET), which you also put in
+  the agent's Event Subscription headers. The store is looked up from the event's agent id in RINGG_AGENT_STORES, never read
+  from the payload. Bodies up to 1 MB are accepted here (transcripts); /chat keeps its small limit. Each accepted call event
+  becomes one "call_event" line in the same funnel log as chat turns: ids, status, duration, cost and callback flag only; no
+  phone numbers, transcript, summary or recording link. No secret configured: 503; wrong secret: 401; not an event: 400.
+
+POST /ringg/tools/<tool>  (the Ringg.AI voice agent's API tools; see bot/ringg.py)
+  Tools: search_products, get_product_details, recommend_products, search_policies, list_categories, list_brands,
+  list_attribute_values, get_shipping_options, get_store_info, check_inventory. Never get_order_status: a caller is a visitor.
+  Headers set in the agent's API tool: X-Ringg-Tools-Key (RINGG_TOOLS_KEY), X-Ringg-Agent-Id (store from RINGG_AGENT_STORES),
+  X-Ringg-Call-Id (optional). Body: the tool's arguments. Reply: the tool's result. Each call writes a "call_tool" event line.
+  The chat reply checks (guardrails.check_reply, price repair) do not apply: Ringg's own model writes what is spoken.
+
 Who is asking and which store are never read from the body or from anything the model can write: the body is
 rejected if it carries any field besides message and history. If BOT_SERVICE_KEY is not set the service refuses
 every chat (fail closed).
@@ -49,9 +63,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
-from bot import events, stores
+from bot import events, ringg, stores
 from bot.context import ChatContext
 from bot.service_limits import ConcurrencyGate, SlidingWindowLimiter
 from bot.store_config import valid_store_id
@@ -104,19 +119,25 @@ class Limits:
                    num("BOT_MAX_CONCURRENT", cls.max_concurrent), num("BOT_MAX_BODY_BYTES", cls.max_body_bytes))
 
 
+RINGG_PATH = "/webhooks/ringg"
+RINGG_TOOLS_PREFIX = "/ringg/tools/"
+RINGG_MAX_BODY_BYTES = 1_048_576          # a completed call carries its transcript; 1 MB is far above a long call
+
+
 class _BodyLimit:
     """Answers 413 when a request body is larger than the limit, whether it announces its size or is sent in chunks.
     For chunks the 413 is sent the moment the limit is crossed and the app is told the client went away; whatever the
     app then tries to send is dropped (FastAPI would otherwise turn a read error into a 400)."""
 
-    def __init__(self, app, max_bytes: int):
-        self.app, self.max_bytes = app, max_bytes
+    def __init__(self, app, max_bytes: int, per_path: dict[str, int] | None = None):
+        self.app, self.max_bytes, self.per_path = app, max_bytes, per_path or {}
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        limit = self.per_path.get(scope.get("path", ""), self.max_bytes)      # e.g. call events carry whole transcripts
         declared = dict(scope["headers"]).get(b"content-length", b"")
-        if declared.isdigit() and int(declared) > self.max_bytes:
+        if declared.isdigit() and int(declared) > limit:
             return await self._refuse(send)
         seen = 0
         refused = False
@@ -128,7 +149,7 @@ class _BodyLimit:
             message = await receive()
             if message["type"] == "http.request":
                 seen += len(message.get("body", b""))
-                if seen > self.max_bytes:
+                if seen > limit:
                     refused = True
                     await self._refuse(send)
                     return {"type": "http.disconnect"}
@@ -194,12 +215,14 @@ class _AccessLog:
 
 def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callable[[], Any] | None = None,
                service_key: str | None = None, limits: Limits | None = None,
-               events_sink: "events.EventSink | None" = None) -> FastAPI:
+               events_sink: "events.EventSink | None" = None, ringg_secret: str | None = None,
+               ringg_agent_stores: dict[str, str] | None = None, ringg_tools_key: str | None = None,
+               tool_fn: Callable[..., dict] | None = None) -> FastAPI:
     app = FastAPI(title="store chat bot", docs_url=None, redoc_url=None, openapi_url=None)
     key = service_key if service_key is not None else os.getenv("BOT_SERVICE_KEY", "")
     limits = limits or Limits.from_env()
     sink = events_sink if events_sink is not None else events.sink_from_env()
-    app.add_middleware(_BodyLimit, max_bytes=limits.max_body_bytes)
+    app.add_middleware(_BodyLimit, max_bytes=limits.max_body_bytes, per_path={RINGG_PATH: RINGG_MAX_BODY_BYTES})
     app.add_middleware(_AccessLog)                       # added last = outermost: it sees what the body limit answers too
     access_log.setLevel(logging.INFO)
     if not logging.getLogger().handlers and not access_log.handlers:       # uvicorn only configures its own loggers
@@ -211,6 +234,10 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
     app.state.gate = ConcurrencyGate(limits.max_concurrent)
     state: dict[str, Any] = {}
     llm_lock = threading.Lock()
+    webhook_secret = ringg_secret if ringg_secret is not None else ringg.secret_from_env()
+    agent_stores = ringg_agent_stores if ringg_agent_stores is not None else ringg.agent_stores_from_env()
+    seen_calls = ringg.Seen()
+    tools_key = ringg_tools_key if ringg_tools_key is not None else ringg.tools_key_from_env()
 
     def llm():
         with llm_lock:                                   # two first chats at once must not build two model clients
@@ -294,5 +321,79 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
                 outcome=outcome, blocked=blocked_reason, ms=int((time.perf_counter() - started) * 1000), tool_events=list(tool_events)))
         except Exception:                                # an event problem must never reach the customer
             log.debug("funnel event failed", exc_info=True)
+
+    @app.post(RINGG_PATH)
+    async def ringg_webhook(request: Request, x_webhook_secret: str | None = Header(default=None)) -> dict[str, Any]:
+        """Ringg.AI call events. Not called through mw: Ringg posts here directly, so it has its own secret, not X-Bot-Key.
+        The secret is checked before the body is read. Always 2xx once accepted (Ringg retries anything else), 400 only
+        for a body that is not a Ringg event (Ringg treats a 4xx as final and does not retry it)."""
+        if not webhook_secret:
+            raise HTTPException(503, "call events are not configured")
+        if not ringg.secret_ok(x_webhook_secret, webhook_secret):
+            raise HTTPException(401, "unauthorized")
+        try:
+            payload = json.loads(await request.body())
+        except ValueError:
+            raise HTTPException(400, "body is not JSON") from None
+        what, event = ringg.handle(payload, agent_stores, seen_calls)
+        if what == "bad_payload":
+            raise HTTPException(400, "not a call event")
+        if event is not None:
+            try:
+                sink.write(event)
+            except Exception:                            # an event problem must never turn into a retry storm
+                log.debug("call event failed", exc_info=True)
+        log.info("ringg_event result=%s type=%s", what, payload.get("event_type") if isinstance(payload.get("event_type"), str) and ringg._CODE.fullmatch(payload["event_type"]) else "other")
+        return {"received": True}
+
+    @app.post(RINGG_TOOLS_PREFIX + "{tool_name}")
+    async def ringg_tool(tool_name: str, request: Request, x_ringg_tools_key: str | None = Header(default=None),
+                         x_ringg_agent_id: str | None = Header(default=None),
+                         x_ringg_call_id: str | None = Header(default=None)) -> dict[str, Any]:
+        """A store tool, called by the Ringg.AI voice agent while it talks. Same tools as /chat, run by the same code
+        (guardrails.run_tool), with a visitor's context: never a customer, so orders are not available here.
+        Headers (all set in the agent's API tool in Ringg, none by the caller's voice):
+          X-Ringg-Tools-Key  static value, must equal RINGG_TOOLS_KEY (401 otherwise, 503 if unset).
+          X-Ringg-Agent-Id   which agent is calling; the store is looked up from RINGG_AGENT_STORES (403 if unknown).
+          X-Ringg-Call-Id    optional, the call id (a Variable row from call_data.id): rate limit and funnel link.
+        Body: the tool's arguments as JSON ({} or empty for list_* tools). The reply is the tool's result."""
+        if not tools_key:
+            raise HTTPException(503, "voice tools are not configured")
+        if not ringg.secret_ok(x_ringg_tools_key, tools_key):
+            raise HTTPException(401, "unauthorized")
+        if tool_name not in ringg.VOICE_TOOLS:
+            raise HTTPException(404, "no such tool")
+        store = agent_stores.get(x_ringg_agent_id) if x_ringg_agent_id else None
+        if not store:
+            raise HTTPException(403, "unknown agent")
+        call_id = x_ringg_call_id if x_ringg_call_id and _REQUEST_ID.fullmatch(x_ringg_call_id) else None
+        raw = await request.body()
+        try:
+            args = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            raise HTTPException(400, "body is not JSON") from None
+        if not isinstance(args, dict):
+            raise HTTPException(400, "body must be a JSON object")
+        for limiter, rate_key in ((client_limiter, f"{store}|ringg:{call_id or x_ringg_agent_id}"), (store_limiter, store)):
+            allowed, wait = limiter.allow(rate_key)
+            if not allowed:
+                raise HTTPException(429, "too many requests, try again shortly", headers={"Retry-After": str(wait)})
+        if not app.state.gate.try_enter():
+            raise HTTPException(503, "busy, try again shortly", headers={"Retry-After": "2"})
+        fn = tool_fn
+        if fn is None:
+            from bot.guardrails import run_tool as fn
+        ctx = ChatContext(store_uuid=store, client_id=f"ringg:{call_id or x_ringg_agent_id}"[:128])     # a visitor: no customer id or token
+        started = time.perf_counter()
+        try:
+            result = await run_in_threadpool(fn, tool_name, args, ctx)
+        finally:
+            app.state.gate.leave()
+        try:
+            sink.write(ringg.build_tool_event(store, call_id, events.summarize_tool(tool_name, args, result),
+                                              int((time.perf_counter() - started) * 1000)))
+        except Exception:
+            log.debug("call tool event failed", exc_info=True)
+        return result if isinstance(result, dict) else {"error": "tool_failed"}
 
     return app
