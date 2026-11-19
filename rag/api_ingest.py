@@ -4,8 +4,11 @@
     python rag/sync.py <store uuid> --types faq           ->  syncs those rows into the RAG database
 
 Only the types whose API response shape has been seen are supported. Today that is FAQs (GET /faqs/global) and
-pages (GET /page/{slug}, the slugs coming from GET /stores). Blogs (GET /blogs) are NOT done: no saved response
-exists, and field names are not guessed. Add each one here, with a fixture and a test, once a real response is available.
+pages (GET /page/{slug}, the slugs coming from GET /stores), and blogs (GET /blogs/active for the list, GET /blogs/{slug}
+for the text). Blogs are opt-in (--types blog): they are not part of the default run. The API lists 10 blogs at a time and
+how to ask for the next page has not been seen, so a store with more than 10 gets a warning that the list is partial.
+Blog rows point at /blogs/{slug}, the API's own route name; the storefront's real blog URL has not been checked.
+Add each new type here, with a fixture and a test, once a real response is available.
 
 Pages become rows of type policy or guide (what sync.py --types takes after a page run). A page is indexed only if it
 is live (status 1, not deleted), has text, and its slug is recognised as a policy or guide page or named with
@@ -25,7 +28,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so bot is importable
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))             # so text_utils is importable
 
-SUPPORTED_TYPES = ("faq", "page")
+SUPPORTED_TYPES = ("faq", "page", "blog")
+DEFAULT_TYPES = ("faq", "page")                 # what a run without --types does; blogs are opt-in
 PAGE_TYPES = ("policy", "guide", "brand_info")
 # Slug words that mark a page as store policy or help text. Anything else (home page, brand and landing pages) is left out
 # unless the person running the ingest names it with --page-type.
@@ -146,7 +150,36 @@ def page_rows(client, overrides: dict[str, str] | None = None, skipped: list | N
     return rows
 
 
-def ingest(client, types=SUPPORTED_TYPES, overrides: dict[str, str] | None = None, skipped: list | None = None,
+def blog_rows(client, skipped: list | None = None, warnings: list | None = None) -> list[dict]:
+    """Chunks for the store's live blog posts: the title as heading, the post text split like a page."""
+    from text_utils import chunk_text, html_to_markdown, strip_boilerplate
+    skipped = skipped if skipped is not None else []
+    warnings = warnings if warnings is not None else []
+    listing = client.blogs()
+    if listing["partial"]:
+        warnings.append(f"blogs: only {len(listing['blogs'])} of {listing['total']} posts were read (the API lists 10 at a time "
+                        "and how to read the next page is not known yet)")
+    rows: list[dict] = []
+    for entry in listing["blogs"]:
+        slug = entry["slug"]
+        if entry.get("status") != 1 or entry.get("deleted_at"):
+            skipped.append((f"blog:{slug}", "deleted or not live"))
+            continue
+        post = client.blog(slug)
+        if post["status"] != 1:
+            skipped.append((f"blog:{slug}", "not live"))
+            continue
+        text = strip_boilerplate(html_to_markdown(_unwrap_inline(post["html"])))
+        if not text.strip():
+            skipped.append((f"blog:{slug}", "no text"))
+            continue
+        title = post["title"] or entry.get("title") or slug
+        for crumb, body in chunk_text(title, text):
+            rows.append(_row("blog", slug, title, crumb, body, f"/blogs/{slug}") | {"updated_at": entry.get("updated_at")})
+    return rows
+
+
+def ingest(client, types=DEFAULT_TYPES, overrides: dict[str, str] | None = None, skipped: list | None = None,
            warnings: list | None = None) -> list[dict]:
     bad = [t for t in types if t not in SUPPORTED_TYPES]
     if bad:
@@ -156,6 +189,8 @@ def ingest(client, types=SUPPORTED_TYPES, overrides: dict[str, str] | None = Non
         rows += faq_rows(client)
     if "page" in types:
         rows += page_rows(client, overrides, skipped, warnings)
+    if "blog" in types:
+        rows += blog_rows(client, skipped, warnings)
     return rows
 
 
@@ -165,7 +200,7 @@ def main(argv: list[str] | None = None) -> None:
     from bot.store_config import valid_store_id
     ap = argparse.ArgumentParser(description="Write chunks.jsonl for one store from its storefront API.")
     ap.add_argument("store_uuid")
-    ap.add_argument("--types", default=",".join(SUPPORTED_TYPES), help="comma list; supported: " + ",".join(SUPPORTED_TYPES))
+    ap.add_argument("--types", default=",".join(DEFAULT_TYPES), help="comma list; supported: " + ",".join(SUPPORTED_TYPES) + " (default: " + ",".join(DEFAULT_TYPES) + ")")
     ap.add_argument("--page-type", action="append", default=[], metavar="SLUG=TYPE",
                     help="index this page as policy, guide or brand_info (repeat for several pages)")
     args = ap.parse_args(argv)
@@ -194,6 +229,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"  WARNING: {w}")
     if "page" in types:
         print("To load page rows: python rag/sync.py <store uuid> --types policy,guide,brand_info")
+    if "blog" in types:
+        print("To load blog rows: python rag/sync.py <store uuid> --types blog")
 
 
 if __name__ == "__main__":

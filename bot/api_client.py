@@ -394,6 +394,36 @@ class ApiClient:
         They show only what exists among the matches, e.g. no Bed Size group at all for a brand whose beds carry none."""
         return self.search_products(query)["filters"]["attribute_options"]
 
+    def blogs(self) -> dict[str, Any]:
+        """GET /blogs/active: the store's live blog posts (title, slug, dates; the post text is read with blog()). The API
+        lists 10 at a time (limit 10) and how to ask for the next page has not been seen, so `partial` says when the list
+        holds fewer posts than the store has."""
+        payload = self._request("GET", "/blogs/active")
+        rows = payload.get("blogs") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ApiError("unexpected /blogs/active response shape")
+        out = []
+        for b in rows:
+            if not isinstance(b, dict) or not b.get("slug"):
+                continue
+            lang = _first_language(b.get("blog_languages"))
+            cat = b.get("blog_category") if isinstance(b.get("blog_category"), dict) else {}
+            out.append({"uuid": b.get("uuid"), "slug": b.get("slug"), "status": b.get("status"), "deleted_at": b.get("deleted_at"),
+                        "updated_at": b.get("updated_at"), "title": lang.get("title"), "category": cat.get("slug")})
+        total = payload.get("totalRecord")
+        return {"blogs": out, "total": total, "partial": isinstance(total, int) and total > len(rows)}
+
+    def blog(self, slug: str) -> dict[str, Any]:
+        """GET /blogs/{slug}: one post. `html` is the raw post body."""
+        payload = self._request("GET", f"/blogs/{urllib.parse.quote(slug, safe='')}")
+        b = payload.get("blog") if isinstance(payload, dict) else None
+        lang = _first_language(b.get("blog_languages")) if isinstance(b, dict) else {}
+        if not isinstance(b, dict) or not b.get("slug") or not lang:
+            raise ApiError("unexpected /blogs/{slug} response shape")
+        cat = b.get("blog_category") if isinstance(b.get("blog_category"), dict) else {}
+        return {"uuid": b.get("uuid"), "slug": b.get("slug"), "status": b.get("status"), "language_id": lang.get("language_id"),
+                "title": lang.get("title"), "html": lang.get("description") or "", "tags": b.get("tags"), "category": cat.get("slug")}
+
     def categories(self) -> list[dict[str, Any]]:
         """GET /categories/tree (a bare list). Returns a trimmed nested tree."""
         payload = self._request("GET", "/categories/tree")
@@ -439,6 +469,19 @@ class ApiClient:
             "products": [self._listing_item(p, base) for p in paged.get("data") or [] if isinstance(p, dict)],
         }
 
+    @staticmethod
+    def _shown_option(p: dict[str, Any]) -> dict[str, Any] | None:
+        variations = p.get("variations")
+        if p.get("product_type") != 1 or not isinstance(variations, list) or not variations or not isinstance(variations[0], dict):
+            return None
+        v = variations[0]
+        labels = [_first_language(a.get("attribute_languages")).get("title") or a.get("slug")
+                  for a in v.get("attributes") or [] if isinstance(a, dict)]
+        price = to_price(v.get("sale_price"))
+        if price is None:
+            return None
+        return {"option": " / ".join(str(x) for x in labels if x) or None, "price": price}
+
     def _listing_item(self, p: dict[str, Any], image_base: str | None) -> dict[str, Any]:
         lang = _first_language(p.get("product_languages"))
         brand = p.get("brand") if isinstance(p.get("brand"), dict) else {}
@@ -451,6 +494,10 @@ class ApiClient:
             # product_type 1 is a product whose price depends on an option such as size: in the saved real data every
             # one has sale_price -0.01 on the product itself, with the real prices on its options (see product_detail).
             "price_varies": p.get("product_type") == 1,
+            # An option-priced product comes with ONE variation (one size and its price). In the real captures it is
+            # not chosen by the attribute filter (a Queen filter showed a Twin) and not known to be the cheapest, so it
+            # is only "this size costs this", never a "from" price and never the price of the size that was asked for.
+            "shown_option": self._shown_option(p),
             "image_url": self.image_url(image_base, p.get("main_image")),
             "tags": lang.get("tags") or "",
         }

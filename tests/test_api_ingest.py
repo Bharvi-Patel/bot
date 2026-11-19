@@ -35,7 +35,7 @@ def test_faq_rows_have_the_index_row_format_and_skip_empty_answers():
 
 def test_ingest_only_offers_types_whose_api_shape_has_been_seen():
     assert len(ai.ingest(FakeClient(FAQS), ("faq",))) == 1
-    for bad in ("blog", "policy"):
+    for bad in ("policy", "product"):
         with pytest.raises(ValueError):
             ai.ingest(FakeClient(FAQS), (bad,))
 

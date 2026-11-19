@@ -343,7 +343,8 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
     shown = rows[:MAX_RESULTS]
     products = [{"sku": p.get("sku"), "slug": p.get("slug"), "name": p.get("name"), "price": p.get("price"),
                  "brand_name": p.get("brand"), "main_image": p.get("image_url"),
-                 **({"price_varies": True} if p.get("price_varies") else {})} for p in shown]
+                 **({"price_varies": True} if p.get("price_varies") else {}),
+                 **({"shown_option": p["shown_option"]} if p.get("price_varies") and p.get("shown_option") else {})} for p in shown]
 
     result: dict[str, Any] = {"count": len(products), "products": products}
     applied = {k: args[k] for k in ("min_price", "max_price") if args.get(k) is not None}
@@ -361,7 +362,9 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
                                   "Do NOT say these are all the matches, and do not say there are none beyond them.")
     if any(p.get("price_varies") for p in products):
         result["price_note"] = ("A product with price_varies true has a price that depends on its option (for example the size); "
-                                "its price is null here. Do not state a price for it. Call get_product_details with its slug to "
+                                "its price is null here. Do not state a price for it. If it has shown_option, that is the price of ONE "
+                                "option only (the size named there). It is not the lowest price and not necessarily the size the "
+                                "customer asked for, so quote it only as that size's price. Call get_product_details with its slug to "
                                 "see the price of each option.")
     elif any(p["price"] is None for p in products):
         result["price_note"] = "A product with price null has no price available. Do not state or guess its price."
