@@ -297,3 +297,24 @@ def test_http_tool_failures_are_returned_to_the_agent_not_raised():
     r = c.post("/ringg/tools/search_products", json={}, headers=TH)
     assert r.status_code == 200 and r.json()["error"] == "tool_failed"
     assert sink.rows[0]["tool"]["ok"] is False
+
+
+def test_clean_tool_args_drops_blank_rows_and_coerces_numeric_strings():
+    raw = {
+        "keyword": "sofa",
+        "category_slug": "",
+        "brand_slug": "  ",
+        "min_price": "null",
+        "max_price": "500",
+        "max_width_in": "60.5",
+        "limit": "5",
+        "color": None,
+    }
+    assert ringg.clean_tool_args(raw) == {
+        "keyword": "sofa",
+        "max_price": 500,
+        "max_width_in": 60.5,
+        "limit": 5,
+    }
+    assert ringg.clean_tool_args({"keyword": "sofa", "max_price": ""}) == {"keyword": "sofa"}
+

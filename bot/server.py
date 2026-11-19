@@ -374,6 +374,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
             raise HTTPException(400, "body is not JSON") from None
         if not isinstance(args, dict):
             raise HTTPException(400, "body must be a JSON object")
+        args = ringg.clean_tool_args(args)
         for limiter, rate_key in ((client_limiter, f"{store}|ringg:{call_id or x_ringg_agent_id}"), (store_limiter, store)):
             allowed, wait = limiter.allow(rate_key)
             if not allowed:
