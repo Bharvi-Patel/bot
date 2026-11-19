@@ -103,6 +103,37 @@ VOICE_TOOLS = ("search_products", "get_product_details", "recommend_products", "
                "list_attribute_values", "get_shipping_options", "get_store_info", "check_inventory")
 assert "get_order_status" not in VOICE_TOOLS
 
+_NUM_ARGS = ("min_price", "max_price", "max_width_in")
+_INT_ARGS = ("limit",)
+
+
+def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Ringg sends every configured Dynamic Row in the JSON body, with "" or "null" for optional rows the model left
+    blank, and sometimes sends integer/decimal rows as strings ("500"). Drop blank optional rows and turn numeric
+    strings into numbers before handing the dict to the store tools."""
+    out: dict[str, Any] = {}
+    for k, v in args.items():
+        if v is None:
+            continue
+        if isinstance(v, str):
+            s = v.strip()
+            if not s or s.lower() in ("null", "none"):
+                continue
+            if k in _INT_ARGS:
+                if re.fullmatch(r"-?\d+", s):
+                    out[k] = int(s)
+                    continue
+            elif k in _NUM_ARGS:
+                if re.fullmatch(r"-?\d+", s):
+                    out[k] = int(s)
+                    continue
+                if re.fullmatch(r"-?\d+\.\d+", s):
+                    out[k] = float(s)
+                    continue
+        out[k] = v
+    return out
+
+
 
 def build_tool_event(store: str, call_id: str | None, summary: dict, ms: int, now: datetime | None = None) -> dict[str, Any]:
     """One line for a tool the voice agent ran: what kind of search, how many results, never the words or the products.
