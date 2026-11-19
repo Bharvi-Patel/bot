@@ -177,10 +177,22 @@ def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
         out.pop("attribute_group", None)
         out.pop("attribute_value", None)
 
+    out.pop("store_uuid", None)
+    out.pop("store_id", None)
     return out
 
 
-
+def resolve_store(agent_id: str | None, agent_stores: dict[str, str], explicit_store: Any = None) -> str | None:
+    """Resolve the store for a Ringg call or tool request.
+    1. Explicit store_uuid passed from the storefront via Ringg custom variables / header (Store-UUID / X-Store-Uuid / custom_args_values.store_uuid).
+    2. Fallback to RINGG_AGENT_STORES[agent_id] (for dedicated per-store agents or dashboard tests).
+    3. Fallback to BOT_STORE_UUID when the agent is in RINGG_AGENT_STORES or for single-store dev setups."""
+    candidate = _id(explicit_store.strip() if isinstance(explicit_store, str) else explicit_store)
+    if candidate and candidate.lower() not in _BLANK_WORDS:
+        return candidate
+    if isinstance(agent_id, str) and agent_id in agent_stores:
+        return agent_stores[agent_id]
+    return None
 
 
 def build_tool_event(store: str, call_id: str | None, summary: dict, ms: int, now: datetime | None = None) -> dict[str, Any]:
@@ -250,9 +262,15 @@ def handle(payload: Any, agent_stores: dict[str, str], seen: Seen, now: datetime
         return "bad_payload", None
     if payload["event_type"] not in RECORDED:
         return "ignored_type", None
-    store = agent_stores.get(payload.get("agent_id")) if isinstance(payload.get("agent_id"), str) else None
+    agent_id = payload.get("agent_id") if isinstance(payload.get("agent_id"), str) else None
+    if not agent_id or (agent_stores and agent_id not in agent_stores):
+        return "unknown_agent", None
+    custom_args = payload.get("custom_args_values")
+    explicit_store = (custom_args.get("store_uuid") or custom_args.get("store_id")) if isinstance(custom_args, dict) else None
+    store = resolve_store(agent_id, agent_stores, explicit_store)
     if not store:
         return "unknown_agent", None
     if not seen.first_time(f"{payload['call_id']}:{payload['event_type']}"):
         return "duplicate", None
     return "recorded", build_call_event(payload, store, now)
+

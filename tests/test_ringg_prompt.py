@@ -45,3 +45,10 @@ def test_it_refuses_to_build_if_the_shared_prompt_no_longer_matches(monkeypatch)
 def test_bad_channel():
     with pytest.raises(ValueError):
         ringg_prompt(SOUTH_JACKSON, "fax")
+
+
+def test_default_shared_prompt_uses_store_name_variable_without_south_jackson():
+    text = ringg_prompt(channel="voice")
+    assert "@store_name" in text
+    assert "South Jackson" not in text
+
