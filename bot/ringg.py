@@ -14,6 +14,11 @@ Which store a call belongs to is never read from the payload. It comes from RING
 Ringg agent id to a store id, e.g. {"<agent id>": "<store uuid>"}. An event from an agent that is not in the map is
 acknowledged and dropped (a 4xx would make Ringg retry nothing useful, and the event is not ours to record).
 
+Tools the voice agent may call (POST /ringg/tools/<name>): the same store tools the chat uses, minus orders. A phone or browser
+caller is never logged in, so get_order_status is not on the list at all (not merely "returns please log in"). Ringg's own model
+writes the spoken reply, so the chat reply checks in bot/guardrails.py do NOT run on voice: the tools' live prices and the agent's
+prompt are the protection (docs/ringg setup notes in bot/server.py).
+
 Setup (see bot/server.py): RINGG_WEBHOOK_SECRET is the value you put in the agent's Event Subscription headers as
 "X-Webhook-Secret"; RINGG_AGENT_STORES as above. Without the secret the endpoint refuses everything (fail closed).
 """
@@ -63,6 +68,11 @@ def agent_stores_from_env() -> dict[str, str]:
     return dict(data)
 
 
+def tools_key_from_env() -> str:
+    """RINGG_TOOLS_KEY: the value of the static header the agent's API tools send (X-Ringg-Tools-Key). Unset = tools refuse."""
+    return os.getenv("RINGG_TOOLS_KEY", "").strip()
+
+
 def secret_ok(received: str | None, expected: str) -> bool:
     """Constant-time check of the X-Webhook-Secret header. An unset expected secret never matches."""
     return bool(expected) and bool(received) and hmac.compare_digest(received.encode(), expected.encode())
@@ -87,6 +97,26 @@ class Seen:
             if len(self._items) > self._limit:
                 self._items.popitem(last=False)
             return True
+
+
+VOICE_TOOLS = ("search_products", "get_product_details", "recommend_products", "search_policies", "list_categories", "list_brands",
+               "list_attribute_values", "get_shipping_options", "get_store_info", "check_inventory")
+assert "get_order_status" not in VOICE_TOOLS
+
+
+def build_tool_event(store: str, call_id: str | None, summary: dict, ms: int, now: datetime | None = None) -> dict[str, Any]:
+    """One line for a tool the voice agent ran: what kind of search, how many results, never the words or the products.
+    `summary` is bot.events.summarize_tool(...), which already holds only counts, flags and catalog slugs."""
+    now = now or datetime.now(timezone.utc)
+    return {
+        "v": SCHEMA_VERSION,
+        "event": "call_tool",
+        "ts": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "store": store if isinstance(store, str) and _ID.fullmatch(store) else None,
+        "call_id": _id(call_id),
+        "ms": _count(ms),
+        "tool": summary if isinstance(summary, dict) else {"name": "other", "ok": False},
+    }
 
 
 def _id(value: Any) -> str | None:

@@ -190,3 +190,110 @@ def test_http_accepts_a_transcript_sized_body_but_chat_keeps_its_small_limit():
     assert c.post("/webhooks/ringg", json=big, headers={"X-Webhook-Secret": "whsec"}).status_code == 200
     r = c.post("/chat", json={"message": "x" * 20000}, headers={"X-Bot-Key": "k", "Store-UUID": "store-a", "X-Client-Id": "1.2.3.4"})
     assert r.status_code == 413
+
+
+# ---------- the voice agent's tools ----------
+def test_voice_tools_never_include_orders_and_are_all_real_tools():
+    from bot.guardrails import TOOLS
+    assert "get_order_status" not in ringg.VOICE_TOOLS
+    assert set(ringg.VOICE_TOOLS) <= set(TOOLS)
+    assert set(TOOLS) - set(ringg.VOICE_TOOLS) == {"get_order_status"}      # a new tool is a conscious decision: add it here or not
+
+
+def test_a_tool_event_holds_only_counts_and_ids():
+    from bot import events
+    summary = events.summarize_tool("search_products", {"keyword": "firm mattress", "max_price": 600}, {"count": 4})
+    ev = ringg.build_tool_event(STORE, "call-1", summary, 83)
+    ev.pop("ts")
+    assert ev == {"v": 1, "event": "call_tool", "store": STORE, "call_id": "call-1", "ms": 83, "tool": summary}
+    assert "firm mattress" not in json.dumps(ev)
+    bad = ringg.build_tool_event("a b", "x y", {"weird": 1}, -4)
+    assert bad["store"] is None and bad["call_id"] is None and bad["ms"] == 0
+
+
+def test_tools_key_setting(monkeypatch):
+    monkeypatch.delenv("RINGG_TOOLS_KEY", raising=False)
+    assert ringg.tools_key_from_env() == ""
+    monkeypatch.setenv("RINGG_TOOLS_KEY", " k1 ")
+    assert ringg.tools_key_from_env() == "k1"
+
+
+def _tools_client(calls, key="toolkey", stores=STORES, result=None):
+    from fastapi.testclient import TestClient
+    from bot.server import create_app
+
+    class Sink:
+        enabled = True
+
+        def __init__(self):
+            self.rows = []
+
+        def write(self, event):
+            self.rows.append(event)
+
+    sink = Sink()
+
+    def tool_fn(name, args, ctx):
+        calls.append((name, args, ctx))
+        return result if result is not None else {"count": 2, "products": []}
+
+    app = create_app(answer_fn=lambda *a, **k: {}, llm_factory=lambda: "L", service_key="k", events_sink=sink,
+                     ringg_secret="whsec", ringg_agent_stores=stores, ringg_tools_key=key, tool_fn=tool_fn)
+    return TestClient(app), sink
+
+
+TH = {"X-Ringg-Tools-Key": "toolkey", "X-Ringg-Agent-Id": AGENT, "X-Ringg-Call-Id": "call-1"}
+
+
+def test_http_tool_runs_with_the_agents_store_and_a_visitor_context():
+    calls = []
+    c, sink = _tools_client(calls)
+    r = c.post("/ringg/tools/search_products", json={"keyword": "sofa", "store_uuid": "store-evil"}, headers=TH)
+    assert r.status_code == 200 and r.json()["count"] == 2
+    name, args, ctx = calls[0]
+    assert name == "search_products" and args["keyword"] == "sofa"
+    assert ctx.store_uuid == STORE and ctx.customer_uuid is None and ctx.customer_token is None     # store from the agent, never the body
+    assert sink.rows[0]["event"] == "call_tool" and sink.rows[0]["call_id"] == "call-1" and "sofa" not in json.dumps(sink.rows)
+
+
+def test_http_orders_are_not_available_by_voice():
+    calls = []
+    c, _ = _tools_client(calls)
+    assert c.post("/ringg/tools/get_order_status", json={"order_number": "1"}, headers=TH).status_code == 404
+    assert c.post("/ringg/tools/not_a_tool", json={}, headers=TH).status_code == 404
+    assert calls == []
+
+
+@pytest.mark.parametrize("headers,status", [({}, 401), ({"X-Ringg-Tools-Key": "wrong", "X-Ringg-Agent-Id": AGENT}, 401),
+                                            ({"X-Bot-Key": "k", "X-Ringg-Agent-Id": AGENT}, 401),
+                                            ({"X-Ringg-Tools-Key": "toolkey"}, 403),
+                                            ({"X-Ringg-Tools-Key": "toolkey", "X-Ringg-Agent-Id": "other-agent"}, 403)])
+def test_http_tool_needs_the_key_and_a_known_agent(headers, status):
+    calls = []
+    c, _ = _tools_client(calls)
+    assert c.post("/ringg/tools/list_brands", json={}, headers=headers).status_code == status
+    assert calls == []
+
+
+def test_http_tools_refuse_everything_when_no_key_is_configured():
+    calls = []
+    c, _ = _tools_client(calls, key="")
+    assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "X-Ringg-Tools-Key": ""}).status_code == 503
+    assert calls == []
+
+
+def test_http_empty_body_is_fine_for_list_tools_and_a_non_object_is_refused():
+    calls = []
+    c, _ = _tools_client(calls)
+    assert c.post("/ringg/tools/list_brands", headers=TH).status_code == 200
+    assert calls[0][1] == {}
+    assert c.post("/ringg/tools/list_brands", content=b"nope", headers=TH).status_code == 400
+    assert c.post("/ringg/tools/list_brands", json=[1], headers=TH).status_code == 400
+
+
+def test_http_tool_failures_are_returned_to_the_agent_not_raised():
+    calls = []
+    c, sink = _tools_client(calls, result={"error": "tool_failed", "note": "Do not guess."})
+    r = c.post("/ringg/tools/search_products", json={}, headers=TH)
+    assert r.status_code == 200 and r.json()["error"] == "tool_failed"
+    assert sink.rows[0]["tool"]["ok"] is False
