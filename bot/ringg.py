@@ -1,0 +1,149 @@
+"""Ringg.AI call events -> the same funnel event log as the chat (bot/events.py).
+
+Ringg POSTs one JSON event per call stage to POST /webhooks/ringg (bot/server.py). This module holds everything that is not
+HTTP: checking the shared secret, finding the store, ignoring repeats, and turning a Ringg payload into one event line.
+
+What is kept (fields checked one by one, like chat events): the call id, the id of the call it came from, the store, the
+conversation id when the call was started with one, the Ringg event type, call type, status, sub-status, duration, cost,
+whether a callback was asked for, and Ringg's one-word classification.
+What is NEVER kept: phone numbers (to_number, from_number, called_on...), the transcript, the summary and key points,
+custom_args_values other than the conversation id, the recording URL, tool_call_logs. Those are customer data; storing any
+of them would need its own consent and retention decision, the same rule bot/events.py follows for chat text.
+
+Which store a call belongs to is never read from the payload. It comes from RINGG_AGENT_STORES, a JSON object that maps a
+Ringg agent id to a store id, e.g. {"<agent id>": "<store uuid>"}. An event from an agent that is not in the map is
+acknowledged and dropped (a 4xx would make Ringg retry nothing useful, and the event is not ours to record).
+
+Setup (see bot/server.py): RINGG_WEBHOOK_SECRET is the value you put in the agent's Event Subscription headers as
+"X-Webhook-Secret"; RINGG_AGENT_STORES as above. Without the secret the endpoint refuses everything (fail closed).
+"""
+from __future__ import annotations
+
+import hmac
+import json
+import logging
+import os
+import re
+import threading
+from collections import OrderedDict
+from datetime import datetime, timezone
+from typing import Any
+
+from bot.events import SCHEMA_VERSION, _CODE, _ID, _count
+
+log = logging.getLogger(__name__)
+
+# The Ringg event types we record. Anything else (call_ringing, call_ongoing, chat_completed...) is acknowledged and ignored.
+RECORDED = ("call_started", "call_completed", "platform_analysis_completed", "all_processing_completed")
+_CALL_TYPES = ("inbound", "outbound", "webcall")
+_STATUSES = ("registered", "ongoing", "retry", "completed", "failed", "error", "cancelled", "forwarded")
+_SUB = re.compile(r"[a-z_ ]{1,40}")
+_CLASS = re.compile(r"[a-z0-9_]{1,40}")
+MAX_SEEN = 20_000
+
+
+def secret_from_env() -> str:
+    return os.getenv("RINGG_WEBHOOK_SECRET", "").strip()
+
+
+def agent_stores_from_env() -> dict[str, str]:
+    """RINGG_AGENT_STORES: {"<ringg agent id>": "<store uuid>"}. Entries with an unusable id are refused at start-up."""
+    raw = os.getenv("RINGG_AGENT_STORES", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"RINGG_AGENT_STORES must be a JSON object: {exc}") from None
+    if not isinstance(data, dict):
+        raise ValueError("RINGG_AGENT_STORES must be a JSON object of agent id -> store id")
+    for agent, store in data.items():
+        if not isinstance(agent, str) or not _ID.fullmatch(agent) or not isinstance(store, str) or not _ID.fullmatch(store):
+            raise ValueError("RINGG_AGENT_STORES has an agent id or store id with characters that are not allowed")
+    return dict(data)
+
+
+def secret_ok(received: str | None, expected: str) -> bool:
+    """Constant-time check of the X-Webhook-Secret header. An unset expected secret never matches."""
+    return bool(expected) and bool(received) and hmac.compare_digest(received.encode(), expected.encode())
+
+
+class Seen:
+    """Remembers (call_id, event_type) pairs, because Ringg retries and can deliver the same event twice.
+    In memory and bounded, so it is per process and forgets on restart: the reader of the log must also keep one line
+    per (call, ringg_event). That is cheap, since the pair is on every line."""
+
+    def __init__(self, limit: int = MAX_SEEN):
+        self._items: OrderedDict[str, None] = OrderedDict()
+        self._limit = limit
+        self._lock = threading.Lock()
+
+    def first_time(self, key: str) -> bool:
+        with self._lock:
+            if key in self._items:
+                self._items.move_to_end(key)
+                return False
+            self._items[key] = None
+            if len(self._items) > self._limit:
+                self._items.popitem(last=False)
+            return True
+
+
+def _id(value: Any) -> str | None:
+    return value if isinstance(value, str) and _ID.fullmatch(value) else None
+
+
+def _number(value: Any, top: float) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= top:
+        return None
+    return round(float(value), 2)
+
+
+def _analysis(payload: dict) -> dict:
+    """platform_analysis_completed has it as analysis_data; all_processing_completed as platform_analysis."""
+    data = payload.get("analysis_data") if payload.get("event_type") == "platform_analysis_completed" else payload.get("platform_analysis")
+    return data if isinstance(data, dict) else {}
+
+
+def build_call_event(payload: dict, store: str, now: datetime | None = None) -> dict[str, Any]:
+    """One call event line. Every field is checked, so a bad value is dropped, never written as given."""
+    now = now or datetime.now(timezone.utc)
+    args = payload.get("custom_args_values")
+    conversation = _id(args.get("conversation_id")) if isinstance(args, dict) else None
+    analysis = _analysis(payload)
+    classification = analysis.get("classification")
+    sub = payload.get("sub_status")
+    return {
+        "v": SCHEMA_VERSION,
+        "event": "call_event",
+        "ts": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "store": store if isinstance(store, str) and _ID.fullmatch(store) else None,
+        "call_id": _id(payload.get("call_id")),
+        "parent_call_id": _id(payload.get("parent_call_id")),
+        "conversation": conversation,
+        "ringg_event": payload.get("event_type") if payload.get("event_type") in RECORDED else None,
+        "call_type": payload.get("call_type") if payload.get("call_type") in _CALL_TYPES else None,
+        "status": payload.get("status") if payload.get("status") in _STATUSES else None,
+        "sub_status": sub.lower() if isinstance(sub, str) and _SUB.fullmatch(sub.lower()) else None,
+        "duration_s": _number(payload.get("call_duration"), 86_400),
+        "cost": _number(payload.get("call_cost"), 10_000),
+        "callback_requested": analysis.get("callback_requested") if isinstance(analysis.get("callback_requested"), bool) else None,
+        "classification": classification if isinstance(classification, str) and _CLASS.fullmatch(classification) else None,
+        "agent_messages": _count(payload.get("agent_message_count")),
+        "user_messages": _count(payload.get("user_message_count")),
+    }
+
+
+def handle(payload: Any, agent_stores: dict[str, str], seen: Seen, now: datetime | None = None) -> tuple[str, dict | None]:
+    """(what happened, the event to write or None). What happened is one of:
+    bad_payload, ignored_type, unknown_agent, duplicate, recorded. The caller answers 400 for bad_payload, 2xx for the rest."""
+    if not isinstance(payload, dict) or not _id(payload.get("call_id")) or not isinstance(payload.get("event_type"), str):
+        return "bad_payload", None
+    if payload["event_type"] not in RECORDED:
+        return "ignored_type", None
+    store = agent_stores.get(payload.get("agent_id")) if isinstance(payload.get("agent_id"), str) else None
+    if not store:
+        return "unknown_agent", None
+    if not seen.first_time(f"{payload['call_id']}:{payload['event_type']}"):
+        return "duplicate", None
+    return "recorded", build_call_event(payload, store, now)
