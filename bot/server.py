@@ -349,12 +349,15 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
     @app.post(RINGG_TOOLS_PREFIX + "{tool_name}")
     async def ringg_tool(tool_name: str, request: Request, x_ringg_tools_key: str | None = Header(default=None),
                          x_ringg_agent_id: str | None = Header(default=None),
-                         x_ringg_call_id: str | None = Header(default=None)) -> dict[str, Any]:
+                         x_ringg_call_id: str | None = Header(default=None),
+                         store_uuid: str | None = Header(default=None),
+                         x_store_uuid: str | None = Header(default=None)) -> dict[str, Any]:
         """A store tool, called by the Ringg.AI voice agent while it talks. Same tools as /chat, run by the same code
         (guardrails.run_tool), with a visitor's context: never a customer, so orders are not available here.
         Headers (all set in the agent's API tool in Ringg, none by the caller's voice):
           X-Ringg-Tools-Key  static value, must equal RINGG_TOOLS_KEY (401 otherwise, 503 if unset).
-          X-Ringg-Agent-Id   which agent is calling; the store is looked up from RINGG_AGENT_STORES (403 if unknown).
+          X-Ringg-Agent-Id   which agent is calling; checked against RINGG_AGENT_STORES (403 if unknown).
+          Store-UUID / X-Store-Uuid  optional Variable row from store_uuid for a shared multi-store agent; falls back to RINGG_AGENT_STORES.
           X-Ringg-Call-Id    optional, the call id (a Variable row from call_data.id): rate limit and funnel link.
         Body: the tool's arguments as JSON ({} or empty for list_* tools). The reply is the tool's result."""
         if not tools_key:
@@ -363,8 +366,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
             raise HTTPException(401, "unauthorized")
         if tool_name not in ringg.VOICE_TOOLS:
             raise HTTPException(404, "no such tool")
-        store = agent_stores.get(x_ringg_agent_id) if x_ringg_agent_id else None
-        if not store:
+        if not x_ringg_agent_id or (agent_stores and x_ringg_agent_id not in agent_stores):
             raise HTTPException(403, "unknown agent")
         call_id = x_ringg_call_id if x_ringg_call_id and _REQUEST_ID.fullmatch(x_ringg_call_id) else None
         raw = await request.body()
@@ -374,6 +376,10 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
             raise HTTPException(400, "body is not JSON") from None
         if not isinstance(args, dict):
             raise HTTPException(400, "body must be a JSON object")
+        explicit_store = store_uuid or x_store_uuid or args.get("store_uuid") or args.get("store_id")
+        store = ringg.resolve_store(x_ringg_agent_id, agent_stores, explicit_store)
+        if not store:
+            raise HTTPException(403, "unknown agent")
         args = ringg.clean_tool_args(args)
         for limiter, rate_key in ((client_limiter, f"{store}|ringg:{call_id or x_ringg_agent_id}"), (store_limiter, store)):
             allowed, wait = limiter.allow(rate_key)

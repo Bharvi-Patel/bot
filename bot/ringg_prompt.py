@@ -39,9 +39,17 @@ VOICE_RULES = """Speaking rules (this is a phone or browser voice call):
 TEXT_RULES = """Chat style: keep answers short, plain text, and link a product or page only with a URL a tool returned."""
 
 
-def ringg_prompt(cfg, channel: str = "text") -> str:
+def _shared_config():
+    from dataclasses import replace
+    from bot.dev_defaults import SOUTH_JACKSON
+    return replace(SOUTH_JACKSON, store_name="@store_name")
+
+
+def ringg_prompt(cfg=None, channel: str = "text") -> str:
     if channel not in ("text", "voice"):
         raise ValueError("channel must be text or voice")
+    if cfg is None:
+        cfg = _shared_config()
     base = render_system_prompt(cfg)
     out, replaced = [], False
     for line in base.split("\n"):
@@ -61,14 +69,18 @@ def ringg_prompt(cfg, channel: str = "text") -> str:
 
 def main(argv: list[str] | None = None) -> None:
     from bot.store_config import valid_store_id
-    ap = argparse.ArgumentParser(description="Print the Ringg agent prompt for one store.")
-    ap.add_argument("store_uuid")
+    ap = argparse.ArgumentParser(description="Print the Ringg agent prompt (shared @store_name by default, or for a specific store_uuid).")
+    ap.add_argument("store_uuid", nargs="?", default=None, help="Optional store_uuid; omit to use @store_name for a shared multi-store agent.")
     ap.add_argument("--channel", choices=("text", "voice"), default="text")
     args = ap.parse_args(argv)
-    if not valid_store_id(args.store_uuid):
-        ap.error("store_uuid has characters that are not allowed")
-    sys.stdout.write(ringg_prompt(config_for(ChatContext(store_uuid=args.store_uuid)), args.channel))
+    cfg = None
+    if args.store_uuid is not None:
+        if not valid_store_id(args.store_uuid):
+            ap.error("store_uuid has characters that are not allowed")
+        cfg = config_for(ChatContext(store_uuid=args.store_uuid))
+    sys.stdout.write(ringg_prompt(cfg, args.channel))
 
 
 if __name__ == "__main__":
     main()
+

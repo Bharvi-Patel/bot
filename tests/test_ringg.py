@@ -337,10 +337,23 @@ def test_clean_tool_args_drops_blank_rows_and_coerces_numeric_strings():
         "material": "fabric",
         "attribute_group": "Bed Size",
         "attribute_value": "Queen",
+        "store_uuid": "store-123",
     }) == {
         "keyword": "sofa",
         "color": "blue",
     }
+
+
+def test_resolve_store_prefers_explicit_store_uuid_and_falls_back_to_agent_map():
+    stores = {AGENT: STORE}
+    assert ringg.resolve_store(AGENT, stores, "other-store-999") == "other-store-999"
+    assert ringg.resolve_store(AGENT, stores, "") == STORE
+    assert ringg.resolve_store(AGENT, stores, None) == STORE
+    assert ringg.resolve_store("unknown", stores, None) is None
+    what, ev = ringg.handle({**_payload(), "custom_args_values": {"store_uuid": "dynamic-store-1", "conversation_id": "c1"}},
+                            stores, ringg.Seen())
+    assert what == "recorded" and ev["store"] == "dynamic-store-1" and ev["conversation"] == "c1"
+
 
 
 
