@@ -405,3 +405,48 @@ def test_the_access_line_is_visible_without_any_logging_setup(capsys, monkeypatc
 def server_access_log():
     import bot.server as server
     return server.access_log
+
+
+# ---------- the customer's login token ----------
+TOKEN = "eyJhbGciOiJIUzI1NiJ9.SECRET-PAYLOAD.SECRET-SIGNATURE"
+
+
+def test_the_customer_token_reaches_the_chat_only_from_the_trusted_header():
+    c, spy = client()
+    r = c.post("/chat", json={"message": "where is my order"}, headers={**GOOD, "X-Customer-Token": TOKEN})
+    assert r.status_code == 200
+    ctx = spy.calls[0][3]
+    assert ctx.customer_token == TOKEN and ctx.customer_uuid is None
+    assert TOKEN not in r.text and TOKEN not in repr(ctx)
+
+
+def test_a_visitor_has_no_token_and_the_body_cannot_supply_one():
+    c, spy = client()
+    c.post("/chat", json={"message": "hi"}, headers=GOOD)
+    assert spy.calls[0][3].customer_token is None
+    r = c.post("/chat", json={"message": "hi", "customer_token": TOKEN}, headers=GOOD)
+    assert r.status_code == 422 and len(spy.calls) == 1
+
+
+@pytest.mark.parametrize("bad", ["short", "has space in it 1234567890", "line\r\nbreak-1234567890", "x" * 4097, "tok;en=1234567890123"])
+def test_a_malformed_token_is_refused_and_never_echoed(bad):
+    c, spy = client()
+    try:
+        r = c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Customer-Token": bad})
+    except Exception:                      # the test client itself may refuse a header with a line break
+        return
+    assert r.status_code == 400 and bad not in r.text and spy.calls == []
+
+
+def test_a_token_marks_the_chat_as_logged_in_in_the_access_log(caplog):
+    caplog.set_level("INFO", logger="bot.access")
+    c, _ = client()
+    c.post("/chat", json={"message": "secret question"}, headers={**GOOD, "X-Customer-Token": TOKEN})
+    line = next(r.getMessage() for r in caplog.records if r.name == "bot.access")
+    assert "logged_in=yes" in line and "SECRET" not in caplog.text and "secret question" not in caplog.text
+
+
+def test_the_service_key_is_still_checked_before_the_token_is_looked_at():
+    c, spy = client()
+    r = c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Bot-Key": "wrong", "X-Customer-Token": TOKEN})
+    assert r.status_code == 401 and spy.calls == [] and TOKEN not in r.text

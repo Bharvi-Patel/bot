@@ -119,7 +119,7 @@ def test_declarations_match_the_tools_own_allowed_keys():
     assert decl["search_policies"] == {"question", "source_types"}
     assert decl["list_attribute_values"] == {"group", "keyword"} and decl["check_inventory"] == {"sku"}
     assert decl["list_brands"] == set() and decl["get_store_info"] == set()
-    assert decl["get_order_status"] == gos.ALLOWED_KEYS == {"order_number", "email"}
+    assert decl["get_order_status"] == gos.ALLOWED_KEYS == {"order_number"}
 
 
 def test_context_reaches_the_order_tool_and_the_model_cannot_supply_it(monkeypatch):
@@ -131,15 +131,16 @@ def test_context_reaches_the_order_tool_and_the_model_cannot_supply_it(monkeypat
     assert out["blocked"] is None and seen == [({"order_number": "1001"}, ctx)]
 
 
-def test_order_lookup_with_a_bad_context_never_reaches_the_database(monkeypatch):
-    def no_db(*a, **k):
-        raise AssertionError("database must not be touched")
-    monkeypatch.setattr("bot.db.run_query", no_db)
-    llm = FakeLLM(call("get_order_status", order_number="1001", email="jo@example.com"),
-                  say("Order lookup is not available right now. Please contact the store."))
-    out = router.answer("order 1001, jo@example.com", llm)                      # no ctx at all
+def test_a_visitor_asking_about_an_order_is_told_to_log_in_and_nothing_is_looked_up(monkeypatch):
+    def no_lookup(*a, **k):
+        raise AssertionError("no database and no API request for a visitor")
+    monkeypatch.setattr("bot.db.run_query", no_lookup)
+    monkeypatch.setattr("bot.api_client.ApiClient.customer_orders", no_lookup)
+    llm = FakeLLM(call("get_order_status", order_number="1001"),
+                  say("Please log in to your account to check an order, or contact the store."))
+    out = router.answer("order 1001", llm)                                     # no ctx at all
     assert out["blocked"] is None
-    assert [m for m in llm.seen[1] if m["role"] == "tool"][0]["result"]["error"] == "verification_unavailable"
+    assert [m for m in llm.seen[1] if m["role"] == "tool"][0]["result"]["error"] == "login_required"
 
 
 def _policy_hit(sim=0.9):

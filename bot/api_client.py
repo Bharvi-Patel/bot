@@ -147,11 +147,11 @@ class ApiClient:
         return headers
 
     def _request(self, method: str, path: str, params: dict[str, Any] | None = None,
-                 body: dict[str, Any] | None = None) -> Any:
+                 body: dict[str, Any] | None = None, extra_headers: dict[str, str] | None = None) -> Any:
         url = self.config.base_url.rstrip("/") + "/" + path.lstrip("/")
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        headers = self._headers()
+        headers = {**self._headers(), **(extra_headers or {})}
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -293,6 +293,32 @@ class ApiClient:
                 "html": lang.get("long_description") or "", "status": page.get("status"),
                 "deleted": bool(page.get("deleted_at")), "updated_at": page.get("updated_at"),
                 "advanced": bool(lang.get("is_advanced"))}
+
+    def customer_orders(self, token: str, limit: int = 25) -> list[dict[str, Any]]:
+        """GET /orders as the logged-in customer: the token is sent as the standard Bearer credential and the API returns only
+        that customer's own orders (it filters on the login). The token is used for this one call and is never stored on the
+        client. Only these fields are kept: order number, status name, date, total and item names. The raw rows also hold the
+        customer's name, phone, email and payment details, which are dropped here. The list endpoint has no item quantities.
+        Field names come from the API's controller code (Laravel writes relations in snake_case, so order_status and order_details);
+        no real response has been saved yet, so check them against one."""
+        if not isinstance(token, str) or not token:
+            raise ApiError("a customer login is required", status=401)
+        payload = self._request("GET", "/orders", params={"page": 1, "limit": int(limit)},
+                                extra_headers={"Authorization": f"Bearer {token}"})
+        rows = payload.get("orders") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ApiError("unexpected /orders response shape")
+        out = []
+        for o in rows:
+            if not isinstance(o, dict) or not o.get("order_number"):
+                continue
+            status = next((o[k] for k in ("order_status", "orderStatus") if isinstance(o.get(k), dict)), {})
+            details = o.get("order_details") or o.get("orderDetails") or []
+            items = [{"name": strip_html(d.get("product_name")), "sku": d.get("product_sku")}
+                     for d in details if isinstance(d, dict) and d.get("product_name")]
+            out.append({"order_number": str(o["order_number"]), "order_status": status.get("name"),
+                        "created_at": o.get("created_at"), "grand_total": to_number(o.get("grand_total")), "items": items})
+        return out
 
     def brands(self) -> list[dict[str, Any]]:
         """GET /brands: vendors[] -> brands[] -> brand_languages[]. Flattened to one row per brand.

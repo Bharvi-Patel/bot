@@ -99,13 +99,12 @@ TOOL_DECLARATIONS: list[dict] = [
     ),
     _tool(
         "get_order_status",
-        "Status of ONE order. Needs the order number and the billing email the customer used on the order (ask for "
-        "whichever is missing; never guess). Returns the order's status, date, total and item names, nothing else. "
-        "Cannot give payment confirmation, tracking or delivery dates, and cannot cancel or change orders.",
+        "The logged-in customer's OWN orders (it works only for a logged-in customer; a visitor gets a 'please log in' result). "
+        "With an order number it returns that order's status, date, total and item names; with none it returns the recent orders. "
+        "Nothing else is returned. Cannot give payment confirmation, tracking or delivery dates, and cannot cancel or change orders.",
         {
-            "order_number": {**_STR, "description": "The order number the customer gave you."},
-            "email": {**_STR, "description": "The billing email the customer typed. Omit it if they have not given one."},
+            "order_number": {**_STR, "description": "The order number the customer gave you. Omit it to see their recent orders."},
         },
-        ["order_number"],
+        [],
     ),
 ]

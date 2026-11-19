@@ -1,173 +1,141 @@
-import hashlib
-import re
+"""get_order_status: the logged-in customer's own orders, read through the store API with the customer's own token."""
+import json
+import logging
 
 import pytest
 
+from bot.api_client import ApiError
 from bot.context import ChatContext
-from bot.tools.get_order_status import (AttemptLimiter, NO_MATCH, NOT_AVAILABLE, RATE_LIMITED, get_order_status)
+from bot.tools import get_order_status as gos
+from bot.tools.get_order_status import (LOGIN_EXPIRED, LOGIN_REQUIRED, NO_MATCH, NO_ORDERS, NOT_AVAILABLE, get_order_status)
 
-EMAIL = "order2@example.test"
-HASH = hashlib.sha256(EMAIL.encode()).hexdigest()
-ORDER = {"order_uuid": "u-1", "order_number": "102500001", "order_status": "Paid", "grand_total": 1952.5,
-         "created_at": "2025-10-14T13:43:37"}
-ITEMS = [{"product_name": "Loreo Sofa", "product_sku": "LOR-1", "product_qty": 2.0}]
-GUEST = ChatContext(client_id="1.2.3.4")
+TOKEN = "eyJhbGciOiJIUzI1NiJ9.SECRET-PAYLOAD.SECRET-SIGNATURE"
+CTX = ChatContext(store_uuid="store-a", client_id="203.0.113.7", customer_uuid="cust-9", customer_token=TOKEN)
 
-
-class FakeDB:
-    """Answers like MySQL would: the order only comes back when the number and the email hash (or customer) match."""
-    def __init__(self, customer_uuid="cust-1"):
-        self.calls, self.customer_uuid = [], customer_uuid
-
-    def __call__(self, sql, params=()):
-        self.calls.append((sql, list(params)))
-        assert re.findall(r"FROM\s+(\w+)", sql) and all(t.startswith("vw_chat_") for t in re.findall(r"FROM\s+(\w+)", sql))
-        if "vw_chat_order_items" in sql:
-            return [dict(r) for r in ITEMS]
-        number, who = params[0], params[1]
-        if number == "102500001" and who in (HASH, self.customer_uuid):
-            return [dict(ORDER)]
-        return []
+ORDERS = [
+    {"order_number": "102500001", "order_status": "Processing", "created_at": "2026-10-02T14:11:09.000000Z", "grand_total": 879.98,
+     "items": [{"name": "Blanche Side Chair Brown", "sku": "2261BRN-S"}, {"name": "Blanche Bench", "sku": None}]},
+    {"order_number": "102500002", "order_status": "Completed", "created_at": "2026-10-20T09:30:00.000000Z", "grand_total": 159.99, "items": []},
+    {"order_number": "102400007", "order_status": None, "created_at": None, "grand_total": 0.0, "items": []},
+]
 
 
-def lookup(args, ctx=GUEST, db=None, limiter=None):
-    return get_order_status(args, ctx=ctx, run_query=db or FakeDB(), limiter=limiter or AttemptLimiter())
+class FakeClient:
+    def __init__(self, orders=ORDERS, error=None):
+        self.orders, self.error, self.calls = orders, error, []
+
+    def customer_orders(self, token, limit=25):
+        self.calls.append((token, limit))
+        if self.error:
+            raise self.error
+        return self.orders
 
 
-# ---------- the happy paths ----------
-def test_guest_with_right_order_and_email_gets_status_and_items():
-    out = lookup({"order_number": "102500001", "email": EMAIL})
-    assert out["found"] is True and out["order_status"] == "Paid" and out["placed_on"] == "2025-10-14"
-    assert out["grand_total"] == 1952.5
-    assert out["items"] == [{"name": "Loreo Sofa", "sku": "LOR-1", "quantity": 2}]
+def run(args, ctx=CTX, client=None):
+    return get_order_status(args, ctx=ctx, client=client or FakeClient())
 
 
-def test_email_is_normalised_and_hash_is_what_reaches_the_database():
-    db = FakeDB()
-    out = lookup({"order_number": " #102500001 ", "email": "  ORDER2@Example.TEST "}, db=db)
-    assert out["found"] is True
-    first_sql, first_params = db.calls[0]
-    assert first_params == ["102500001", HASH] and "example.test" not in str(db.calls)
+# ---- who may ask ----
+@pytest.mark.parametrize("ctx", [None, ChatContext(), ChatContext(store_uuid="s", customer_uuid="c-1"),
+                                 ChatContext(store_uuid="s", client_id="x", customer_token=None)])
+def test_a_visitor_gets_a_log_in_answer_and_no_request_is_made(ctx):
+    client = FakeClient()
+    assert get_order_status({"order_number": "102500001"}, ctx=ctx, client=client) == LOGIN_REQUIRED
+    assert client.calls == []
 
 
-def test_logged_in_customer_matches_on_session_uuid_without_email():
-    db = FakeDB()
-    out = lookup({"order_number": "102500001"}, ctx=ChatContext(client_id="x", customer_uuid="cust-1"), db=db)
-    assert out["found"] is True and "customer_uuid = %s" in db.calls[0][0] and db.calls[0][1] == ["102500001", "cust-1"]
+def test_a_customer_id_without_a_token_is_not_enough():
+    assert run({"order_number": "102500001"}, ChatContext(store_uuid="s", customer_uuid="cust-9")) == LOGIN_REQUIRED
 
 
-def test_logged_in_customer_cannot_see_someone_elses_order_and_is_not_rate_limited():
-    ctx = ChatContext(client_id="x", customer_uuid="someone-else")
-    for n in range(20):
-        assert lookup({"order_number": f"10250{n:04d}"}, ctx=ctx) == NO_MATCH
+def test_the_log_in_answer_tells_the_model_not_to_collect_personal_details():
+    assert "Do not ask for an order number, email or any personal details" in LOGIN_REQUIRED["note"]
 
 
-def test_status_missing_is_reported_as_not_on_file():
-    db = lambda sql, params=(): [dict(ORDER, order_status=None)] if "vw_chat_orders" in sql else []
-    assert lookup({"order_number": "102500001", "email": EMAIL}, db=db)["order_status"] == "not on file"
+def test_there_is_no_guest_lookup_by_email_any_more():
+    out = run({"order_number": "102500001", "email": "someone@example.com"})
+    assert out == {"error": "unknown parameter(s): email"}
+    assert gos.ALLOWED_KEYS == {"order_number"}
 
 
-# ---------- never leaks whether an order exists ----------
-def test_wrong_email_unknown_order_and_other_customers_order_all_look_identical():
-    wrong_email = lookup({"order_number": "102500001", "email": "someone@else.com"})
-    no_such_order = lookup({"order_number": "999999999", "email": EMAIL})
-    odd_format = lookup({"order_number": "1; DROP TABLE orders", "email": EMAIL})
-    assert wrong_email == no_such_order == odd_format == NO_MATCH
-
-
-def test_only_the_agreed_fields_are_returned():
-    out = lookup({"order_number": "102500001", "email": EMAIL})
+# ---- what comes back ----
+def test_one_order_by_number_has_only_the_fields_the_bot_may_state():
+    client = FakeClient()
+    out = run({"order_number": "102500001"}, client=client)
     assert set(out) == {"found", "order_number", "order_status", "placed_on", "grand_total", "items", "note"}
-    assert all(set(i) == {"name", "sku", "quantity"} for i in out["items"])
+    assert out["found"] is True and out["order_number"] == "102500001" and out["order_status"] == "Processing"
+    assert out["placed_on"] == "2026-10-02" and out["grand_total"] == 879.98
+    assert out["items"] == [{"name": "Blanche Side Chair Brown", "sku": "2261BRN-S"}, {"name": "Blanche Bench", "sku": None}]
+    assert out["note"] == gos.STATUS_NOTE
+    assert client.calls == [(TOKEN, gos.MAX_ORDERS)]
 
 
-def test_payment_status_is_never_selected():
-    db = FakeDB()
-    lookup({"order_number": "102500001", "email": EMAIL}, db=db)
-    assert all("payment_status" not in sql for sql, _ in db.calls)
+@pytest.mark.parametrize("typed", ["#102500001", " 102500001 ", "102500001"])
+def test_the_number_is_matched_after_cleaning_it_up(typed):
+    assert run({"order_number": typed})["order_number"] == "102500001"
 
 
-# ---------- the model cannot widen access ----------
-@pytest.mark.parametrize("extra", ["customer_uuid", "client_id", "order_uuid", "sql"])
-def test_model_cannot_pass_identity_or_other_arguments(extra):
-    db = FakeDB()
-    out = lookup({"order_number": "102500001", "email": EMAIL, extra: "x"}, db=db)
-    assert "error" in out and extra in out["error"] and db.calls == []
+def test_without_a_number_the_recent_orders_are_listed():
+    out = run({})
+    assert out["found"] is True and [o["order_number"] for o in out["orders"]] == ["102500001", "102500002", "102400007"]
+    assert out["orders"][2]["order_status"] == "not on file" and out["orders"][2]["placed_on"] is None
+    assert "note" in out
 
 
-def test_input_problems_come_back_as_data_without_touching_the_database():
-    db = FakeDB()
-    assert lookup({}, db=db)["error"].startswith("order_number is required")
-    assert lookup({"order_number": "  "}, db=db)["error"].startswith("order_number is required")
-    assert lookup({"order_number": 1001}, db=db)["error"].startswith("order_number is required")
-    assert lookup({"order_number": "102500001"}, db=db)["error"] == "email_required"
-    assert lookup({"order_number": "102500001", "email": "not-an-email"}, db=db)["error"] == "invalid_email"
-    assert lookup({"order_number": "102500001", "email": "a@b.co" + "x" * 300}, db=db)["error"] == "invalid_email"
-    assert db.calls == []
+def test_at_most_five_recent_orders_are_listed():
+    many = [{"order_number": f"10{n}", "order_status": "x", "created_at": None, "grand_total": 1.0, "items": []} for n in range(9)]
+    assert len(run({}, client=FakeClient(many))["orders"]) == gos.LIST_LIMIT
 
 
-def test_no_client_id_fails_closed_for_guests():
-    for ctx in (None, ChatContext()):
-        db = FakeDB()
-        assert lookup({"order_number": "102500001", "email": EMAIL}, ctx=ctx, db=db) == NOT_AVAILABLE and db.calls == []
+def test_an_account_with_no_orders_says_so():
+    assert run({}, client=FakeClient([])) == NO_ORDERS
 
 
-def test_user_text_is_only_ever_a_bound_parameter():
-    db = FakeDB()
-    lookup({"order_number": "102500001", "email": EMAIL}, db=db)
-    for sql, _ in db.calls:
-        assert "102500001" not in sql and "example" not in sql and "%s" in sql and "LIMIT" in sql
+# ---- misses look the same, whatever the reason ----
+def test_another_customers_or_an_unknown_order_is_just_not_found():
+    assert run({"order_number": "999999999"}) == NO_MATCH
 
 
-def test_item_list_is_capped():
-    db = FakeDB()
-    lookup({"order_number": "102500001", "email": EMAIL}, db=db)
-    assert db.calls[1][1][1] == 25
+@pytest.mark.parametrize("bad", ["x" * 31, "1 2", "1;DROP", "../1", "", "#"])
+def test_a_badly_formed_number_is_refused_without_a_request(bad):
+    client = FakeClient()
+    out = run({"order_number": bad}, client=client)
+    assert out == NO_MATCH or "error" in out
+    assert client.calls == []
 
 
-# ---------- rate limit ----------
-class Clock:
-    def __init__(self):
-        self.t = 0.0
-
-    def __call__(self):
-        return self.t
+def test_a_number_that_is_not_text_is_an_error():
+    assert "error" in run({"order_number": 123})
 
 
-def test_sixth_different_guess_is_refused_and_does_not_reach_the_database():
-    clock, db = Clock(), FakeDB()
-    lim = AttemptLimiter(clock=clock)
-    for n in range(5):
-        assert lookup({"order_number": f"99900000{n}", "email": EMAIL}, db=db, limiter=lim) == NO_MATCH
-    calls_before = len(db.calls)
-    assert lookup({"order_number": "102500001", "email": EMAIL}, db=db, limiter=lim) == RATE_LIMITED
-    assert len(db.calls) == calls_before
+# ---- failures ----
+@pytest.mark.parametrize("status", [401, 403])
+def test_an_expired_or_refused_login_asks_to_log_in_again(status):
+    assert run({"order_number": "102500001"}, client=FakeClient(error=ApiError("Unauthenticated", status=status))) == LOGIN_EXPIRED
 
 
-def test_repeating_the_same_guess_is_not_a_new_attempt():
-    lim = AttemptLimiter(clock=Clock())
-    for _ in range(12):                                   # the model retrying one lookup must not burn the budget
-        assert lookup({"order_number": "102500001", "email": EMAIL}, limiter=lim)["found"] is True
+@pytest.mark.parametrize("error", [ApiError("boom", status=500), ApiError("could not reach", retryable=True), ApiError("odd shape")])
+def test_any_other_api_failure_is_unavailable(error):
+    assert run({"order_number": "102500001"}, client=FakeClient(error=error)) == NOT_AVAILABLE
 
 
-def test_window_expires_and_visitors_are_separate():
-    clock = Clock()
-    lim = AttemptLimiter(clock=clock)
-    for n in range(5):
-        lookup({"order_number": f"11{n}", "email": EMAIL}, limiter=lim)
-    assert lookup({"order_number": "999", "email": EMAIL}, limiter=lim) == RATE_LIMITED
-    assert lookup({"order_number": "999", "email": EMAIL}, ctx=ChatContext(client_id="5.6.7.8"), limiter=lim) == NO_MATCH
-    clock.t = 15 * 60 + 1
-    assert lookup({"order_number": "999", "email": EMAIL}, limiter=lim) == NO_MATCH
+# ---- the token never leaks ----
+def test_the_token_is_never_in_a_result_or_a_log(caplog):
+    caplog.set_level(logging.DEBUG)
+    results = [run({"order_number": "102500001"}), run({}), run({"order_number": "1"}),
+               run({"order_number": "102500001"}, client=FakeClient(error=ApiError(f"bad {TOKEN}", status=500))),
+               run({}, client=FakeClient(error=ApiError("x", status=401)))]
+    blob = json.dumps(results) + caplog.text
+    assert "SECRET" not in blob and TOKEN not in blob
 
 
-def test_limiter_keeps_no_plain_email_or_order_number():
-    lim = AttemptLimiter()
-    lookup({"order_number": "102500001", "email": EMAIL}, limiter=lim)
-    dumped = str(lim._hits)
-    assert EMAIL not in dumped and "102500001" not in dumped
+def test_the_token_is_not_in_the_contexts_printout_and_does_not_affect_equality():
+    ctx = ChatContext(store_uuid="s", customer_token=TOKEN)
+    assert TOKEN not in repr(ctx) and "SECRET" not in str(ctx)
+    assert ctx == ChatContext(store_uuid="s", customer_token="another")
 
 
-def test_a_found_order_tells_the_model_it_cannot_cancel_or_change_orders():
-    note = lookup({"order_number": "102500001", "email": EMAIL})["note"]
-    assert "cannot cancel, change, refund or return" in note and "get_store_info" in note and "cannot be done in this chat" in note
+def test_the_tool_never_touches_a_database():
+    import pathlib
+    text = pathlib.Path(gos.__file__).read_text(encoding="utf8").lower()
+    assert "bot.db" not in text and "vw_chat" not in text and "run_query" not in text and "mysql" not in text

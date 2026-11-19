@@ -8,6 +8,8 @@ POST /chat
     Store-UUID       the store of the storefront that sent the chat.
     X-Client-Id      who is asking, for rate limits: the real client IP or a signed session id.
     X-Customer-Uuid  only for a really logged-in customer. Leave it out for visitors.
+    X-Customer-Token that customer's own login token (the one the store API issued), only when logged in. The bot forwards it to the
+                     store API for order questions; the API decides which orders are theirs. It is never logged or shown.
   Body (JSON, nothing else is accepted):
     {"message": "...", "history": [{"role": "user" | "assistant", "text": "..."}]}
   Reply: {"reply": "...", "blocked": null | "<reason>"}
@@ -58,6 +60,7 @@ _TOOL_NAME = re.compile(r"[a-z_]{1,40}")
 MAX_MESSAGE_CHARS = 1000
 MAX_HISTORY = 10
 _CLIENT_ID = re.compile(r"[A-Za-z0-9._:\-]{1,128}")
+_CUSTOMER_TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{16,4096}")          # what a JWT is made of; no spaces or line breaks
 
 
 class HistoryItem(BaseModel):
@@ -217,6 +220,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         store_uuid: str | None = Header(default=None),
         x_client_id: str | None = Header(default=None),
         x_customer_uuid: str | None = Header(default=None),
+        x_customer_token: str | None = Header(default=None),
     ) -> ChatContext:
         if not key:
             raise HTTPException(503, "chat is not configured")
@@ -231,10 +235,13 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
             raise HTTPException(400, "X-Client-Id header is missing or not valid")
         if x_customer_uuid is not None and not valid_store_id(x_customer_uuid):
             raise HTTPException(400, "X-Customer-Uuid header is not valid")
+        if x_customer_token is not None and not _CUSTOMER_TOKEN.fullmatch(x_customer_token):
+            raise HTTPException(400, "X-Customer-Token header is not valid")          # the value is never echoed or logged
         request.state.store = store_uuid
         request.state.client = hashlib.sha256(x_client_id.encode()).hexdigest()[:12]      # same short hash as the Langfuse tag
-        request.state.logged_in = bool(x_customer_uuid)
-        return ChatContext(store_uuid=store_uuid, client_id=x_client_id, customer_uuid=x_customer_uuid or None)
+        request.state.logged_in = bool(x_customer_uuid or x_customer_token)
+        return ChatContext(store_uuid=store_uuid, client_id=x_client_id, customer_uuid=x_customer_uuid or None,
+                           customer_token=x_customer_token or None)
 
     @app.get("/health")
     def health() -> dict[str, bool]:

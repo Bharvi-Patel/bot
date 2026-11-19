@@ -454,3 +454,51 @@ def test_page_marks_deleted_and_page_builder_pages_without_guessing_their_conten
     client, _ = make(body)
     page = client.page("p")
     assert page["deleted"] is True and page["advanced"] is True and page["html"] == ""
+
+
+# ---------- the logged-in customer's orders ----------
+def test_customer_orders_send_the_customers_own_token_and_keep_only_the_fields_the_bot_may_state():
+    client, t = make(fixture("orders_index_from_controller_code"))
+    orders = client.customer_orders("tok.en.value", limit=10)
+    req = t.requests[0]
+    assert req.full_url == "http://127.0.0.1:8001/orders?page=1&limit=10"
+    assert req.get_header("Authorization") == "Bearer tok.en.value" and req.get_header("Store-uuid") == UUID
+    assert [o["order_number"] for o in orders] == ["102500001", "102500002", "102400007"]
+    first = orders[0]
+    assert set(first) == {"order_number", "order_status", "created_at", "grand_total", "items"}
+    assert first["order_status"] == "Processing" and first["grand_total"] == 879.98
+    assert first["items"] == [{"name": "Blanche Side Chair Brown", "sku": "2261BRN-S"},
+                              {"name": "Blanche Brown Dining Group Set", "sku": "2261BRN-5P-Set"}]
+    blob = json.dumps(orders)
+    for private in ("customer@example.com", "Customer", "(000) 000-0000", "txn_SECRET_1", "card", "cust-9", "uuid"):
+        assert private not in blob
+    assert orders[2]["order_status"] is None and orders[2]["items"] == []
+
+
+def test_the_token_is_not_kept_on_the_client_and_other_calls_never_carry_it():
+    client, t = make(fixture("orders_index_from_controller_code"), fixture("brands"))
+    client.customer_orders("tok.en.value")
+    client.brands()
+    assert t.requests[0].get_header("Authorization") == "Bearer tok.en.value"
+    assert t.requests[1].get_header("Authorization") is None
+    assert "tok.en.value" not in repr(vars(client)) and "tok.en.value" not in repr(client.config)
+
+
+def test_customer_orders_need_a_token_and_reject_a_wrong_shape():
+    client, t = make(b'{"orders": []}')
+    for bad in ("", None):
+        with pytest.raises(ApiError) as exc:
+            client.customer_orders(bad)
+        assert exc.value.status == 401
+    assert t.requests == []                                                       # nothing is sent without a login
+    client, _ = make(b'{"status": true, "orders": "no"}')
+    with pytest.raises(ApiError):
+        client.customer_orders("tok.en.value")
+
+
+def test_an_unauthenticated_answer_from_the_api_is_a_401_error():
+    err = urllib.error.HTTPError("http://x", 401, "Unauthorized", {}, io.BytesIO(b'{"message":"Unauthenticated"}'))
+    client, _ = make(err)
+    with pytest.raises(ApiError) as exc:
+        client.customer_orders("tok.en.value")
+    assert exc.value.status == 401 and "tok.en.value" not in str(exc.value)

@@ -16,8 +16,8 @@ def test_tools_that_read_store_or_customer_data_get_the_context_and_the_rest_do_
 
 
 def test_order_tool_without_context_does_not_look_anything_up():
-    out = g.run_tool("get_order_status", {"order_number": "1", "email": "a@b.co"})
-    assert out["error"] == "verification_unavailable"
+    out = g.run_tool("get_order_status", {"order_number": "1"})
+    assert out["error"] == "login_required"
 
 
 def test_non_dict_args_rejected():

@@ -108,7 +108,7 @@ def test_order_notes_tell_the_model_to_answer_before_giving_contact_details():
     assert "Do not say whether payment was received" in gos.STATUS_NOTE and "Never repeat the customer's email" in gos.STATUS_NOTE
     note = gos.NO_MATCH["note"]
     assert "couldn't find an order matching those details" in note and "double-check" in note
-    assert "Do not say whether the order number exists or which detail was wrong" in note
+    assert "Do not say whether the order number exists" in note
 
 
 def test_weak_policy_matches_carry_a_warning_note_and_strong_ones_do_not():
