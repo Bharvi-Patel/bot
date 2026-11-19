@@ -108,7 +108,7 @@ _INT_ARGS = ("limit",)
 
 
 def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Ringg sends every configured Dynamic Row in the JSON body, with "" or "null" for optional rows the model left
+    """Ringg sends every configured Dynamic Row in the JSON body, with "" / "null" / 0 for optional rows the model left
     blank, and sometimes sends integer/decimal rows as strings ("500"). Drop blank optional rows and turn numeric
     strings into numbers before handing the dict to the store tools."""
     out: dict[str, Any] = {}
@@ -119,19 +119,22 @@ def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
             s = v.strip()
             if not s or s.lower() in ("null", "none"):
                 continue
-            if k in _INT_ARGS:
-                if re.fullmatch(r"-?\d+", s):
-                    out[k] = int(s)
-                    continue
-            elif k in _NUM_ARGS:
-                if re.fullmatch(r"-?\d+", s):
-                    out[k] = int(s)
-                    continue
-                if re.fullmatch(r"-?\d+\.\d+", s):
-                    out[k] = float(s)
-                    continue
+            if k in _INT_ARGS and re.fullmatch(r"-?\d+", s):
+                v = int(s)
+            elif k in _NUM_ARGS and re.fullmatch(r"-?\d+", s):
+                v = int(s)
+            elif k in _NUM_ARGS and re.fullmatch(r"-?\d+\.\d+", s):
+                v = float(s)
+            else:
+                if k == "sort" and s in ("name_asc", "default"):
+                    s = "name"
+                out[k] = s
+                continue
+        if k in (*_NUM_ARGS, *_INT_ARGS) and not isinstance(v, bool) and isinstance(v, (int, float)) and v == 0:
+            continue
         out[k] = v
     return out
+
 
 
 

@@ -317,4 +317,9 @@ def test_clean_tool_args_drops_blank_rows_and_coerces_numeric_strings():
         "limit": 5,
     }
     assert ringg.clean_tool_args({"keyword": "sofa", "max_price": ""}) == {"keyword": "sofa"}
+    assert ringg.clean_tool_args({"keyword": "sofa", "min_price": 0, "max_width_in": 0, "sort": "name_asc"}) == {
+        "keyword": "sofa",
+        "sort": "name",
+    }
+
 
