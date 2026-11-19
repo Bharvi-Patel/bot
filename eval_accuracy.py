@@ -411,7 +411,7 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     runnable = [c for c in cases if all(n in subs for n in c.get("needs", []))]
     skipped = [c["id"] for c in cases if c not in runnable]
     if run_query is None:
-        from bot.db import run_query
+        from dev_tools.db import run_query
     truth = {c["id"]: fetch_truth(c, subs, run_query) for c in runnable}
 
     if args.check_truth:

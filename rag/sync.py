@@ -1,6 +1,6 @@
 """5.7 nightly sync: read chunks.jsonl, upsert only rows whose content_hash changed, delete rows whose source is gone
 or went to status 0, log added/changed/removed. Uses only the 5.3 columns. Identity of a chunk = (source_key, content_hash).
-Run build.py first (it re-reads the dump export). Plug your existing embedding function into embed()."""
+Run api_ingest.py first (it writes chunks.jsonl from the store's API). Plug your existing embedding function into embed()."""
 import json, os, psycopg                      # pip install "psycopg[binary]" pgvector
 try:
     from pgvector.psycopg import register_vector

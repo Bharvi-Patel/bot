@@ -232,10 +232,9 @@ def test_shipping_search_failure_is_unavailable_not_a_guess():
     assert out["error"] == "shipping_information_unavailable" and "chunks" not in out
 
 
-def test_shipping_never_touches_the_database(monkeypatch):
-    import bot.db as db
-    monkeypatch.setattr(db, "run_query", lambda *a, **k: (_ for _ in ()).throw(AssertionError("database used")))
-    assert get_shipping_options({}, search=FakeSearch({"found": False}))["found"] is False
+def test_shipping_answers_from_the_policy_search_only():
+    search = FakeSearch({"found": False})
+    assert get_shipping_options({}, search=search)["found"] is False and search.calls    # see test_no_database_in_service.py
 
 
 @pytest.mark.parametrize("bad", [{"country": "US"}, {"zone_keyword": 5}, {"zone_keyword": "x" * 300}])

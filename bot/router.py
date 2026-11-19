@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot import tracing
+from bot import events, tracing
 from bot.context import ChatContext
 from bot.guardrails import (CONTACT_UNTRUSTED_TOOLS, FALLBACK, SYSTEM_PROMPT, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
                               repair_contacts, run_tool, store_contact_text, strip_unknown_links)
@@ -188,6 +188,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
                     sp.update(output=result)
                 tools_used.append(call.name)
                 results.append(result)
+                events.record_tool(call.name, args, result)          # funnel event summary; a no-op outside the HTTP service
                 seen_calls[call_key] = result
                 if call.name == "search_products":
                     search_calls.append(args)

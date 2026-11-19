@@ -24,7 +24,7 @@ import time
 import traceback
 from datetime import datetime
 
-from bot.db import run_query as rq
+from dev_tools.db import run_query as rq
 from bot.tools.check_inventory import check_inventory
 from bot.tools.get_product_details import get_product_details
 from bot.tools.get_shipping_options import get_shipping_options

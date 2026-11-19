@@ -74,36 +74,3 @@ def compose_document(p: dict, category_titles: list[str], attrs: dict[str, list[
 
 def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
-
-
-# ---- category tree helpers (vw_chat_categories: parent_id points at category_id, an integer) ----
-def descendants(categories: list[dict], root_slugs: list[str]) -> tuple[list[dict], list[str]]:
-    """Every category under the given root slugs (roots included). Returns (categories, slugs that matched nothing)."""
-    children: dict[Any, list[dict]] = {}
-    for c in categories:
-        children.setdefault(c["parent_id"], []).append(c)
-    by_slug = {c["slug"]: c for c in categories}
-    out, missing, seen = [], [], set()
-    for slug in root_slugs:
-        root = by_slug.get(slug)
-        if not root:
-            missing.append(slug)
-            continue
-        stack = [root]
-        while stack:
-            c = stack.pop()
-            if c["category_id"] in seen:
-                continue
-            seen.add(c["category_id"])
-            out.append(c)
-            stack.extend(children.get(c["category_id"], []))
-    return out, missing
-
-
-def slugs_with_ancestors(category_uuid: str, by_uuid: dict[str, dict], by_id: dict[Any, dict]) -> list[str]:
-    """A product linked to 'Sofas' is also found by filtering on its parent 'Sofas & Seating'."""
-    out, c, guard = [], by_uuid.get(category_uuid), 0
-    while c and guard < 20:
-        out.append(c["slug"])
-        c, guard = by_id.get(c["parent_id"]), guard + 1
-    return out

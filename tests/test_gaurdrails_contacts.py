@@ -1,3 +1,5 @@
+import pytest
+
 from bot import guardrails as g
 
 STORE = [{"phone": "(731) 423-6565", "email": "shop@store.com"}]
@@ -205,3 +207,17 @@ def test_router_strips_an_invented_link_and_keeps_the_answer(monkeypatch, tmp_pa
             return LLMTurn(text="Shipping within the USA is $299. [Shipping page](https://southjacksonfurniture.com/shipping)")
     out = router.answer("how much is shipping in the us", Llm())
     assert out["blocked"] is None and out["reply"] == "Shipping within the USA is $299. Shipping page"
+
+# ---------- internal names are never shown, for any store ----------
+@pytest.mark.parametrize("reply", [
+    "The data is in acme_store_db.", "Connect to somestore_dev for that.", "see southjacksonfurniture_dev", "the VW_CHAT_products view",
+    "it comes from base_price", "try information_schema"])
+def test_internal_database_names_are_blocked(reply):
+    assert g.check_reply(reply, []) == (False, "internal_leak")
+
+
+@pytest.mark.parametrize("reply", [
+    "We have a device with a dev kit.", "Our mobile_device line is popular.", "Call us on 555-0100.", "A good db of options", "It is a db-free design."])
+def test_ordinary_words_that_look_a_little_like_internal_names_are_not_blocked(reply):
+    ok, why = g.check_reply(reply, [])
+    assert why != "internal_leak"

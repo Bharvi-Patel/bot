@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def check_inventory(args: dict[str, Any], run_query=None) -> dict[str, Any]:
+def check_inventory(args: dict[str, Any]) -> dict[str, Any]:
     unknown = set(args) - {"sku"}
     if unknown:
         return {"error": f"unknown parameter(s): {', '.join(sorted(unknown))}"}

@@ -1,4 +1,4 @@
-"""Database access for the chatbot tools.
+"""Developer-only access to the old South Jackson MySQL views, for the root-level eval and check scripts (never the service).
 
 Connects as the read-only user (chatbot_ro), which can only SELECT from vw_chat_* views.
 Every tool passes SQL with %s placeholders plus a params list; values are never pasted into the SQL text.

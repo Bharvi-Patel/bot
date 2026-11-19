@@ -1,4 +1,4 @@
-"""Build products.jsonl for ONE store from its storefront API (no MySQL), replacing rag/build_products.py for new stores.
+"""Build products.jsonl for ONE store from its storefront API (no MySQL). It replaces the old MySQL builder, which has been removed.
 
   python rag/api_products.py <store-uuid> --slug mattresses-and-bedding --slug home-office-and-study-desks
   python rag/api_products.py <store-uuid> --keyword desk --limit 50

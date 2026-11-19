@@ -1,6 +1,6 @@
 import pytest
 
-from bot.product_docs import compose_document, descendants, slugs_with_ancestors
+from bot.product_docs import compose_document
 from bot.tools.recommend_products import recommend_products
 
 
@@ -115,16 +115,6 @@ def test_document_template_skips_empty_lines_and_never_has_price():
     assert text.splitlines() == ["Adlai Sofa", "Brand: Acme | Categories: Sofas | Living | SKU: A1", "Style: Modern",
                                  "Attributes: Color: Gray, Blue; Material: Fabric", "Dimensions (in): 72 W", "Summary: Compact."]
     assert "499" not in text
-
-
-def test_category_tree_helpers():
-    cats = [dict(category_id=1, category_uuid="a", parent_id=None, slug="seating", title="Seating"),
-            dict(category_id=2, category_uuid="b", parent_id=1, slug="sofas", title="Sofas"),
-            dict(category_id=3, category_uuid="c", parent_id=2, slug="sectionals", title="Sectionals"),
-            dict(category_id=4, category_uuid="d", parent_id=None, slug="beds", title="Beds")]
-    scope, missing = descendants(cats, ["sofas", "nope"])
-    assert sorted(c["slug"] for c in scope) == ["sectionals", "sofas"] and missing == ["nope"]
-    assert slugs_with_ancestors("c", {c["category_uuid"]: c for c in cats}, {c["category_id"]: c for c in cats}) == ["sectionals", "sofas", "seating"]
 
 
 def test_live_check_uses_one_api_call_per_product_and_no_category_tree(monkeypatch):

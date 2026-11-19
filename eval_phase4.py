@@ -18,7 +18,7 @@ import logging
 import sys
 from datetime import datetime
 
-from bot.db import run_query as rq
+from dev_tools.db import run_query as rq
 from bot.tools.list_categories import list_categories
 from bot.tools.recommend_products import CUTOFF, recommend_products
 from bot.tools.search_policies import _default_run_query

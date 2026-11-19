@@ -133,8 +133,7 @@ def test_context_reaches_the_order_tool_and_the_model_cannot_supply_it(monkeypat
 
 def test_a_visitor_asking_about_an_order_is_told_to_log_in_and_nothing_is_looked_up(monkeypatch):
     def no_lookup(*a, **k):
-        raise AssertionError("no database and no API request for a visitor")
-    monkeypatch.setattr("bot.db.run_query", no_lookup)
+        raise AssertionError("no API request for a visitor")
     monkeypatch.setattr("bot.api_client.ApiClient.customer_orders", no_lookup)
     llm = FakeLLM(call("get_order_status", order_number="1001"),
                   say("Please log in to your account to check an order, or contact the store."))

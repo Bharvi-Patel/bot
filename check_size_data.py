@@ -6,7 +6,7 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from bot.db import run_query
+from dev_tools.db import run_query
 
 pattern = sys.argv[1] if len(sys.argv) > 1 else "Queen%Mattress"
 rows = run_query("SELECT product_uuid, parent_uuid, name, price FROM vw_chat_products "

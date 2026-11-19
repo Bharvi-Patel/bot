@@ -6,7 +6,7 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from bot.db import run_query
+from dev_tools.db import run_query
 
 pattern = sys.argv[1] if len(sys.argv) > 1 else "Chime 8 Inch Memory Foam Twin"
 hit = run_query("SELECT product_uuid, parent_uuid, name FROM vw_chat_products WHERE name LIKE %s LIMIT 1", [f"%{pattern}%"])

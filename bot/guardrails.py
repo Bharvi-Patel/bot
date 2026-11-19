@@ -80,7 +80,7 @@ FALLBACK = "Sorry, I can't answer that reliably. Please contact the store direct
 _PRICE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _PHONE = re.compile(r"(?<!\d)\(?\d{3}\)?[\s.\u2010-\u2015-]*\d{3}[\s.\u2010-\u2015-]*\d{4}(?!\d)")
-_BLOCKED = re.compile(r"base_price|vw_chat|information_schema|chatbot_ro|markup|rag_chunks|southjackson\w*_(?:db|dev)", re.I)
+_BLOCKED = re.compile(r"base_price|vw_chat|information_schema|chatbot_ro|markup|rag_chunks|\b\w+_(?:db|dev)\b", re.I)   # internal names; the last one is any "<store>_db" / "<store>_dev" database name
 
 
 EXTRACTION_REPLY = extraction_reply(SOUTH_JACKSON)

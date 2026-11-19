@@ -26,6 +26,10 @@ reply, raw client id or customer id): request_id, status, ms, store, client (the
 visitor), logged_in, blocked, tools. The caller may send X-Request-Id (letters, digits . _ - up to 64) to follow one chat
 across mw and the bot; otherwise one is made. It is returned in the X-Request-Id response header.
 
+Funnel events (bot/events.py): when BOT_EVENTS_DIR is set, every chat turn that reaches the assistant also writes one
+event line (counts, tool names and outcome; never any customer text). The caller may send X-Conversation-Id (letters,
+digits . _ - up to 64) so turns of one conversation can be grouped; without it the field is empty.
+
 Who is asking and which store are never read from the body or from anything the model can write: the body is
 rejected if it carries any field besides message and history. If BOT_SERVICE_KEY is not set the service refuses
 every chat (fail closed).
@@ -47,7 +51,7 @@ from typing import Any, Callable, Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from bot import stores
+from bot import events, stores
 from bot.context import ChatContext
 from bot.service_limits import ConcurrencyGate, SlidingWindowLimiter
 from bot.store_config import valid_store_id
@@ -163,6 +167,7 @@ class _AccessLog:
         state = scope.setdefault("state", {})
         incoming = dict(scope["headers"]).get(b"x-request-id", b"").decode("latin-1")
         request_id = incoming if _REQUEST_ID.fullmatch(incoming) else secrets.token_hex(8)
+        state["request_id"] = request_id                 # the funnel event carries the same id as the access-log line
         status = 500
 
         async def tracking_send(message):
@@ -188,10 +193,12 @@ class _AccessLog:
 
 
 def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callable[[], Any] | None = None,
-               service_key: str | None = None, limits: Limits | None = None) -> FastAPI:
+               service_key: str | None = None, limits: Limits | None = None,
+               events_sink: "events.EventSink | None" = None) -> FastAPI:
     app = FastAPI(title="store chat bot", docs_url=None, redoc_url=None, openapi_url=None)
     key = service_key if service_key is not None else os.getenv("BOT_SERVICE_KEY", "")
     limits = limits or Limits.from_env()
+    sink = events_sink if events_sink is not None else events.sink_from_env()
     app.add_middleware(_BodyLimit, max_bytes=limits.max_body_bytes)
     app.add_middleware(_AccessLog)                       # added last = outermost: it sees what the body limit answers too
     access_log.setLevel(logging.INFO)
@@ -221,6 +228,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         x_client_id: str | None = Header(default=None),
         x_customer_uuid: str | None = Header(default=None),
         x_customer_token: str | None = Header(default=None),
+        x_conversation_id: str | None = Header(default=None),
     ) -> ChatContext:
         if not key:
             raise HTTPException(503, "chat is not configured")
@@ -240,6 +248,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         request.state.store = store_uuid
         request.state.client = hashlib.sha256(x_client_id.encode()).hexdigest()[:12]      # same short hash as the Langfuse tag
         request.state.logged_in = bool(x_customer_uuid or x_customer_token)
+        request.state.conversation = x_conversation_id if x_conversation_id and _REQUEST_ID.fullmatch(x_conversation_id) else None
         return ChatContext(store_uuid=store_uuid, client_id=x_client_id, customer_uuid=x_customer_uuid or None,
                            customer_token=x_customer_token or None)
 
@@ -259,15 +268,31 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
                 raise HTTPException(429, "too many messages, try again shortly", headers={"Retry-After": str(wait)})
         if not app.state.gate.try_enter():
             raise HTTPException(503, "the assistant is busy, try again shortly", headers={"Retry-After": "2"})
-        try:
-            out = fn(body.message, llm(), history, ctx=ctx)
-        except Exception:
-            log.exception("chat failed")                 # no message text in the log
-            raise HTTPException(502, "the assistant is unavailable right now") from None
-        finally:
-            app.state.gate.leave()
+        started = time.perf_counter()
+        outcome, blocked_reason = "error", None
+        with events.collect() as tool_events:
+            try:
+                out = fn(body.message, llm(), history, ctx=ctx)
+                blocked_reason = out.get("blocked")
+                outcome = "blocked" if blocked_reason else "answered"
+            except Exception:
+                log.exception("chat failed")             # no message text in the log
+                raise HTTPException(502, "the assistant is unavailable right now") from None
+            finally:
+                app.state.gate.leave()
+                _emit_event(request, ctx, outcome, blocked_reason, started, tool_events)
         request.state.blocked = out.get("blocked")
         request.state.tools = out.get("tools_used")
         return ChatResponse(reply=out["reply"], blocked=out.get("blocked"))
+
+    def _emit_event(request: Request, ctx: ChatContext, outcome: str, blocked_reason: Any, started: float, tool_events: list) -> None:
+        try:
+            st = request.state
+            sink.write(events.build_chat_event(
+                request_id=getattr(st, "request_id", None), store=ctx.store_uuid, client=getattr(st, "client", None),
+                conversation=getattr(st, "conversation", None), logged_in=bool(getattr(st, "logged_in", False)),
+                outcome=outcome, blocked=blocked_reason, ms=int((time.perf_counter() - started) * 1000), tool_events=list(tool_events)))
+        except Exception:                                # an event problem must never reach the customer
+            log.debug("funnel event failed", exc_info=True)
 
     return app

@@ -12,7 +12,7 @@ is live (status 1, not deleted), has text, and its slug is recognised as a polic
 --page-type slug=type. Every page left out is printed with the reason, and a page that still carries another store's
 demo data (the B3 template comment) is flagged, so nothing is dropped silently.
 
-Row format is the one rag/build.py writes and rag/sync.py reads, so the search tools need no change.
+Row format is the one rag/sync.py reads, so the search tools need no change.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # project root, so bot is importable
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))             # so build's cleaning helpers are importable
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))             # so text_utils is importable
 
 SUPPORTED_TYPES = ("faq", "page")
 PAGE_TYPES = ("policy", "guide", "brand_info")
@@ -56,7 +56,7 @@ def _unwrap_inline(html_text: str) -> str:
 
 def faq_rows(client) -> list[dict]:
     """One chunk per FAQ: the question as heading, the answer as text. FAQs are short, so they are not split."""
-    from build import html_to_markdown, strip_boilerplate
+    from text_utils import html_to_markdown, strip_boilerplate
     rows = []
     for f in client.faqs():
         text = strip_boilerplate(html_to_markdown(_unwrap_inline(f["answer_html"])))
@@ -109,7 +109,7 @@ def page_rows(client, overrides: dict[str, str] | None = None, skipped: list | N
               warnings: list | None = None) -> list[dict]:
     """Chunks for the store's live policy and help pages. Pages left out go into `skipped` as (slug, reason); pages that
     still hold another store's demo data go into `warnings`."""
-    from build import chunk_text, html_to_markdown, strip_boilerplate
+    from text_utils import chunk_text, html_to_markdown, strip_boilerplate
     skipped = skipped if skipped is not None else []
     warnings = warnings if warnings is not None else []
     store = client.store_info()
