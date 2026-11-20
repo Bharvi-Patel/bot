@@ -342,12 +342,12 @@ def test_search_trims_the_text_before_sending():
 
 
 def test_unfiltered_category_request_carries_the_paging_workaround():
-    """Without any filter the API serves every page from one cached page 1; a price_range from 0 avoids that
-    and returned the same totals on two real categories."""
+    """Without a non-empty filter the API serves every page from one cached page 1 (even price_range.from=0 hits
+    that cache bug because PHP treats 0 as empty); sort_by="az" bypasses it and pages cleanly."""
     client, t = make(fixture("category_products"))
     client.category_products("dining-room", page=2)
     assert t.requests[0].full_url.endswith("/categories/dining-room/products?page=2")
-    assert json.loads(t.requests[0].data) == {"price_range": {"from": 0}}
+    assert json.loads(t.requests[0].data) == {"sort_by": "az"}
 
 
 def test_category_request_with_a_price_limit_does_not_add_the_workaround():
@@ -359,7 +359,7 @@ def test_category_request_with_a_price_limit_does_not_add_the_workaround():
 def test_category_request_with_brand_only_still_gets_the_workaround():
     client, t = make(fixture("category_products"))
     client.category_products("dining-room", brand_ids=["24535729948324335664029000859186"])
-    assert json.loads(t.requests[0].data) == {"brand_ids": ["24535729948324335664029000859186"], "price_range": {"from": 0}}
+    assert json.loads(t.requests[0].data) == {"brand_ids": ["24535729948324335664029000859186"], "sort_by": "az"}
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -387,7 +387,7 @@ def test_search_sends_one_attribute_id():
 def test_category_request_sends_attribute_ids_with_the_paging_workaround():
     client, t = make(fixture("category_products"))
     client.category_products("bedroom-furniture-beds", attribute_ids=["67ace390fcb040008ecdc568b52e13f2"])
-    assert json.loads(t.requests[0].data) == {"attribute_ids": ["67ace390fcb040008ecdc568b52e13f2"], "price_range": {"from": 0}}
+    assert json.loads(t.requests[0].data) == {"attribute_ids": ["67ace390fcb040008ecdc568b52e13f2"], "sort_by": "az"}
 
 
 @pytest.mark.parametrize("bad", ["not-a-list", [5], ["bad id"], [None]])

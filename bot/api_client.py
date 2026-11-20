@@ -67,11 +67,15 @@ class ApiConfig:
 _FILTER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
+_SORT_VALUES = frozenset({"az", "za", "price_low_high", "price_high_low"})
+
+
 def _filter_body(brand_ids: list[str] | None, price_from: float | None, price_to: float | None,
-                 per_page: int | None, attribute_ids: list[str] | None = None) -> dict[str, Any]:
+                 per_page: int | None, attribute_ids: list[str] | None = None,
+                 sort_by: str | None = None) -> dict[str, Any]:
     """The filter part of a listing request, in the formats the real API accepted:
     brand_ids as a list of brand uuids, price_range as {"from": n, "to": n} (the {"min","max"} form is ignored),
-    per_page as a number. Anything else is a bug in the caller, so it raises ValueError."""
+    per_page as a number, sort_by as one of az/za/price_low_high/price_high_low. Anything else raises ValueError."""
     body: dict[str, Any] = {}
     if brand_ids:
         if not isinstance(brand_ids, (list, tuple)) or not all(isinstance(b, str) and _FILTER_ID_RE.match(b) for b in brand_ids):
@@ -94,6 +98,10 @@ def _filter_body(brand_ids: list[str] | None, price_from: float | None, price_to
         if isinstance(per_page, bool) or not isinstance(per_page, int) or not 1 <= per_page <= 40:
             raise ValueError("per_page must be a whole number from 1 to 40")  # 40 is the largest size tried on the real API
         body["per_page"] = per_page
+    if sort_by is not None:
+        if not isinstance(sort_by, str) or sort_by not in _SORT_VALUES:
+            raise ValueError(f"sort_by must be one of: {', '.join(sorted(_SORT_VALUES))}")
+        body["sort_by"] = sort_by
     return body
 
 
@@ -394,11 +402,19 @@ class ApiClient:
         They show only what exists among the matches, e.g. no Bed Size group at all for a brand whose beds carry none."""
         return self.search_products(query)["filters"]["attribute_options"]
 
-    def blogs(self) -> dict[str, Any]:
-        """GET /blogs/active: the store's live blog posts (title, slug, dates; the post text is read with blog()). The API
-        lists 10 at a time (limit 10) and how to ask for the next page has not been seen, so `partial` says when the list
-        holds fewer posts than the store has."""
-        payload = self._request("GET", "/blogs/active")
+    def blogs(self, page: int = 1, limit: int | None = None) -> dict[str, Any]:
+        """GET /blogs/active: the store's live blog posts (title, slug, dates; the post text is read with blog()).
+        Confirmed against the live API (19 Nov): paginates with ?page=N&limit=M (default limit 10)."""
+        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+            raise ValueError("page must be a whole number of 1 or more")
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100):
+            raise ValueError("limit must be a whole number from 1 to 100")
+        params: dict[str, Any] = {}
+        if page > 1:
+            params["page"] = page
+        if limit is not None:
+            params["limit"] = limit
+        payload = self._request("GET", "/blogs/active", params=params or None)
         rows = payload.get("blogs") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise ApiError("unexpected /blogs/active response shape")
@@ -411,7 +427,8 @@ class ApiClient:
             out.append({"uuid": b.get("uuid"), "slug": b.get("slug"), "status": b.get("status"), "deleted_at": b.get("deleted_at"),
                         "updated_at": b.get("updated_at"), "title": lang.get("title"), "category": cat.get("slug")})
         total = payload.get("totalRecord")
-        return {"blogs": out, "total": total, "partial": isinstance(total, int) and total > len(rows)}
+        return {"blogs": out, "total": total, "page": payload.get("currentPage", page), "limit": payload.get("limit", limit),
+                "partial": isinstance(total, int) and total > len(rows)}
 
     def blog(self, slug: str) -> dict[str, Any]:
         """GET /blogs/{slug}: one post. `html` is the raw post body."""
@@ -441,20 +458,21 @@ class ApiClient:
 
     def category_products(self, slug: str, page: int = 1, *, brand_ids: list[str] | None = None,
                           price_from: float | None = None, price_to: float | None = None,
-                          per_page: int | None = None, attribute_ids: list[str] | None = None) -> dict[str, Any]:
+                          per_page: int | None = None, attribute_ids: list[str] | None = None,
+                          sort_by: str | None = None) -> dict[str, Any]:
         """POST /categories/{slug}/products?page=N, 16 per page unless per_page is given.
 
         PAGING WORKAROUND: the API caches an unfiltered category list for 24 hours under a key with no page number,
-        so every page of it comes back as page 1 (seen in the real API, 17 Nov; see its ProductController).
-        A request with any filter uses a cache key that includes the page. So an unfiltered request is sent with
-        price_range {"from": 0}, which leaves the results unchanged (same totals on two real categories) and makes
-        paging work. Remove this once the API's cache key includes the page."""
-        if price_from is None and price_to is None:
-            price_from = 0
+        so every page of it comes back as page 1 (and price_range {"from": 0} also hits that bug because PHP treats
+        0 as empty — confirmed live on 19 Nov). Sending sort_by="az" bypasses the broken cache key, returns distinct
+        pages across the full total (including -0.01 option-priced products), and matches alphabetical default order.
+        Remove this once the API's cache key includes the page."""
+        if sort_by is None and not (price_from or price_to):
+            sort_by = "az"
         params = {"page": page} if page and page > 1 else None
         quoted = urllib.parse.quote(slug, safe="")
         payload = self._request("POST", f"/categories/{quoted}/products", params=params,
-                                body=_filter_body(brand_ids, price_from, price_to, per_page, attribute_ids))
+                                body=_filter_body(brand_ids, price_from, price_to, per_page, attribute_ids, sort_by))
         data = payload.get("data") if isinstance(payload, dict) else None
         paged = data.get("product") if isinstance(data, dict) else None
         if not isinstance(paged, dict):

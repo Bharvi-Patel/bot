@@ -176,3 +176,35 @@ def test_blogs_are_supported_but_not_part_of_the_default_run():
     assert "blog" in ai.SUPPORTED_TYPES and "blog" not in ai.DEFAULT_TYPES
     rows = ai.ingest(real(), ("blog",))
     assert rows and all(r["source_type"] == "blog" for r in rows)
+
+
+def test_blog_rows_paginates_across_multiple_pages_using_page_and_limit():
+    seen_urls = []
+    detail = json.loads((FIX / "blog_detail.json").read_text())
+
+    def opener(req, timeout=None):
+        seen_urls.append(req.full_url)
+        u = urllib.parse.urlparse(req.full_url)
+        qs = urllib.parse.parse_qs(u.query)
+        if u.path == "/blogs/active":
+            page = int(qs.get("page", ["1"])[0])
+            if page == 1:
+                body = {"success": True, "totalRecord": 2, "currentPage": 1, "limit": 50,
+                        "blogs": [{"slug": "post-1", "status": 1, "deleted_at": None, "blog_languages": [{"title": "Post 1"}]}]}
+            else:
+                body = {"success": True, "totalRecord": 2, "currentPage": 2, "limit": 50,
+                        "blogs": [{"slug": "post-2", "status": 1, "deleted_at": None, "blog_languages": [{"title": "Post 2"}]}]}
+            return Resp(json.dumps(body).encode())
+        slug = u.path.rsplit("/", 1)[-1]
+        d = json.loads(json.dumps(detail))
+        d["blog"]["slug"] = slug
+        d["blog"]["blog_languages"][0]["title"] = slug.title()
+        return Resp(json.dumps(d).encode())
+
+    client = ApiClient(ApiConfig("http://x", "uuid", retries=0), opener=opener)
+    warnings = []
+    rows = ai.blog_rows(client, [], warnings)
+    assert warnings == []
+    assert {r["source_key"] for r in rows} == {"post-1", "post-2"}
+    assert any("limit=50" in u for u in seen_urls) and any("page=2" in u for u in seen_urls)
+

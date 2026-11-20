@@ -150,17 +150,41 @@ def page_rows(client, overrides: dict[str, str] | None = None, skipped: list | N
     return rows
 
 
+MAX_BLOG_PAGES = 20
+BLOG_PAGE_LIMIT = 50
+
+
 def blog_rows(client, skipped: list | None = None, warnings: list | None = None) -> list[dict]:
-    """Chunks for the store's live blog posts: the title as heading, the post text split like a page."""
+    """Chunks for the store's live blog posts: the title as heading, the post text split like a page.
+    Paginates through GET /blogs/active?page=N&limit=50 until every post is read or a page adds no new slugs."""
+    import os
     from text_utils import chunk_text, html_to_markdown, strip_boilerplate
     skipped = skipped if skipped is not None else []
     warnings = warnings if warnings is not None else []
-    listing = client.blogs()
-    if listing["partial"]:
-        warnings.append(f"blogs: only {len(listing['blogs'])} of {listing['total']} posts were read (the API lists 10 at a time "
-                        "and how to read the next page is not known yet)")
+    blog_url = os.environ.get("SJ_BLOG_URL", "/blogs/{slug}")
+    entries: list[dict] = []
+    seen_slugs: set[str] = set()
+    total: int | None = None
+    for page in range(1, MAX_BLOG_PAGES + 1):
+        listing = client.blogs(page=page, limit=BLOG_PAGE_LIMIT) if page > 1 else client.blogs(limit=BLOG_PAGE_LIMIT)
+        if isinstance(listing.get("total"), int):
+            total = listing["total"]
+        batch = listing.get("blogs") or []
+        added = 0
+        for entry in batch:
+            slug = entry.get("slug")
+            if slug and slug not in seen_slugs:
+                seen_slugs.add(slug)
+                entries.append(entry)
+                added += 1
+        if not batch or added == 0:
+            break
+        if total is not None and len(entries) >= total:
+            break
+    if total is not None and len(entries) < total:
+        warnings.append(f"blogs: only {len(entries)} of {total} posts were read")
     rows: list[dict] = []
-    for entry in listing["blogs"]:
+    for entry in entries:
         slug = entry["slug"]
         if entry.get("status") != 1 or entry.get("deleted_at"):
             skipped.append((f"blog:{slug}", "deleted or not live"))
@@ -175,7 +199,7 @@ def blog_rows(client, skipped: list | None = None, warnings: list | None = None)
             continue
         title = post["title"] or entry.get("title") or slug
         for crumb, body in chunk_text(title, text):
-            rows.append(_row("blog", slug, title, crumb, body, f"/blogs/{slug}") | {"updated_at": entry.get("updated_at")})
+            rows.append(_row("blog", slug, title, crumb, body, blog_url.format(slug=slug)) | {"updated_at": entry.get("updated_at")})
     return rows
 
 

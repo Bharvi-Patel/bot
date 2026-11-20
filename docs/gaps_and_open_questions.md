@@ -22,11 +22,12 @@
 - **Leftover South Jackson hardcoding in shared helpers:**
   - [x] `rag/text_utils.py` boilerplate contact-footer stripping generalized (no longer hardcodes South Jackson's phone/email).
   - [x] `bot/ringg_prompt.py` shared `@store_name` prompt now uses a store-agnostic `StoreConfig` (`--vertical general|furniture`) without South Jackson's `"Rugs and Decor"` or US-only shipping rule.
-- [ ] **Mattress index gap (231 vs 569):** Still undiagnosed pending per-category API total vs collected output from `rag/api_products.py`.
+- [x] **Mattress index gap (231 vs 569) & broken category paging:** Diagnosed live — the storefront API only has 231 active products in `mattresses-and-bedding` (`beautyrest`=0, `sierra sleep`=0, `nectar`=2; remaining ~338 from old MySQL dump are inactive/removed). The probe also caught that `price_range: {"from": 0}` still hit the API's cached-page-1 bug (`empty(0)` in PHP), now fixed in `bot/api_client.py` by using `sort_by: "az"`.
 - **Unverified / partial API integrations:**
   - [ ] **Orders:** `customer_orders` is tested only against a synthetic fixture (`tests/fixtures/api/orders_index_from_controller_code.json`) — never verified against a real customer `/orders` response; no item quantities yet.
-  - [ ] **Blogs:** `rag/api_ingest.py` only reads the first 10 blogs (pagination unknown) and assumes storefront URL `/blogs/{slug}`.
-  - [ ] **Products & pages:** `rag/api_products.py` assumes `/product/{slug}`; option-priced products have `sku=None`; `max_width_in` is unsupported (`search_products.py`); `is_advanced` page-builder pages are skipped (`api_client.py`); non-variation product attributes/promotions aren't parsed yet (`api_client.py`).
+  - [x] **Blog pagination:** Confirmed `GET /blogs/active?page=N&limit=50` live and wired full multi-page pagination into `bot/api_client.py` and `rag/api_ingest.py` (`SJ_BLOG_URL` env override added).
+  - [x] **Advanced pages (`is_advanced`) & non-variation attributes/colors/promotions:** Verified live on South Jackson (`0/18` pages are `is_advanced`; `attributes`/`colors`/`promotions` are `[]`; `sizes` duplicates `groupedAttributes`/`options`).
+  - [ ] **Remaining API assumptions/limits:** Confirm storefront product/blog URL paths (`SJ_PRODUCT_URL` `/product/{slug}`, `SJ_BLOG_URL` `/blogs/{slug}`); option-priced products have `sku=None`; `max_width_in` is unsupported (`search_products.py`).
 - **Packaging & hygiene:**
   - [x] `mysql-connector-python` moved out of runtime `requirements.txt` into `requirements-dev.txt`.
   - [x] `events/` added to `.gitignore` and untracked from git.
@@ -71,8 +72,8 @@
 - [ ] **Storefront routes:** Confirm exact storefront URL paths for products (currently assumed `/product/{slug}`) and blogs (currently assumed `/blogs/{slug}`).
 - [ ] **Bot-to-API authentication:** Agree on header name and mechanism for `BOT_API_KEY` (`bot/api_client.py`).
 - [ ] **Public shipping-options endpoint:** Can the API team add a read-only public shipping/pickup endpoint, or stick with shipping policy text?
-- [ ] **API pagination & cache:** Confirm how `GET /blogs/active` paginates past 10 posts, fix the unfiltered category cache key, and verify the Redis per-store cache prefix in staging/production.
-- [ ] **Mattress count (231 vs 569):** Run `rag/api_products.py` with the per-category diagnostic to confirm whether ~338 products are hidden/inactive in the API or lost during pagination.
+- [ ] **API cache (API team):** Fix the unfiltered category cache key (now worked around via `sort_by="az"` in `bot/api_client.py`) and verify the Redis per-store cache prefix in staging/production. *(Blog pagination via `?page=N&limit=M` is confirmed and fixed.)*
+- [x] **Mattress count (231 vs 569):** Confirmed live via `dev_tools/probe_api_gaps.py` — API has 231 active products; missing ~338 from old dump are no longer active in the API.
 - [ ] **Future pricing (Priorities #3 & #7):** Confirm response fields once `customer_groups_price` and monthly/weekly pricing land in the API.
 
 ### Deployment / Ops Questions
