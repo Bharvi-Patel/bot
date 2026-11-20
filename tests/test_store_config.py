@@ -103,3 +103,28 @@ def test_removing_a_store_switches_it_off_after_the_ttl(tmp_path):
     now[0] = 61
     with pytest.raises(StoreNotConfigured):
         cfgs.for_store("acme-1")
+
+
+def test_per_store_service_key_parsing_and_validation(monkeypatch):
+    from bot.store_config import service_key_from_env, service_key_ok
+    monkeypatch.delenv("BOT_SERVICE_KEY", raising=False)
+    assert service_key_from_env() == ""
+    monkeypatch.setenv("BOT_SERVICE_KEY", "shared-k")
+    assert service_key_from_env() == "shared-k"
+    assert service_key_ok("shared-k", "store-a", "shared-k")
+    assert not service_key_ok("wrong", "store-a", "shared-k")
+
+    per_store = {"store-a": "key-a", "store-b": "key-b"}
+    monkeypatch.setenv("BOT_SERVICE_KEY", json.dumps(per_store))
+    loaded = service_key_from_env()
+    assert loaded == per_store
+    assert service_key_ok("key-a", "store-a", loaded)
+    assert not service_key_ok("key-a", "store-b", loaded)
+    assert not service_key_ok("key-a", "unknown", loaded)
+    assert not service_key_ok("key-a", None, loaded)
+
+    for bad in ("{not json", "{}", json.dumps({"bad id": "k"}), json.dumps({"store-a": ""})):
+        monkeypatch.setenv("BOT_SERVICE_KEY", bad)
+        with pytest.raises(ValueError):
+            service_key_from_env()
+

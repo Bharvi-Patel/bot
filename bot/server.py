@@ -69,7 +69,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bot import events, ringg, stores
 from bot.context import ChatContext
 from bot.service_limits import ConcurrencyGate, SlidingWindowLimiter
-from bot.store_config import StoreNotConfigured, valid_store_id
+from bot.store_config import StoreNotConfigured, service_key_from_env, service_key_ok, valid_store_id
 
 log = logging.getLogger(__name__)
 access_log = logging.getLogger("bot.access")
@@ -214,12 +214,12 @@ class _AccessLog:
 
 
 def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callable[[], Any] | None = None,
-               service_key: str | None = None, limits: Limits | None = None,
+               service_key: str | dict[str, str] | None = None, limits: Limits | None = None,
                events_sink: "events.EventSink | None" = None, ringg_secret: str | None = None,
                ringg_agent_stores: dict[str, Any] | None = None, ringg_tools_key: str | dict[str, str] | None = None,
                tool_fn: Callable[..., dict] | None = None) -> FastAPI:
     app = FastAPI(title="store chat bot", docs_url=None, redoc_url=None, openapi_url=None)
-    key = service_key if service_key is not None else os.getenv("BOT_SERVICE_KEY", "")
+    key = service_key if service_key is not None else service_key_from_env()
     limits = limits or Limits.from_env()
     sink = events_sink if events_sink is not None else events.sink_from_env()
     app.add_middleware(_BodyLimit, max_bytes=limits.max_body_bytes, per_path={RINGG_PATH: RINGG_MAX_BODY_BYTES})
@@ -259,7 +259,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
     ) -> ChatContext:
         if not key:
             raise HTTPException(503, "chat is not configured")
-        if not x_bot_key or not hmac.compare_digest(x_bot_key.encode(), key.encode()):
+        if not service_key_ok(x_bot_key, store_uuid, key):
             raise HTTPException(401, "unauthorized")
         if not stores.is_multi_store() and os.getenv("BOT_ALLOW_DEV_DEFAULTS") != "1":
             log.error("BOT_STORE_CONFIG_DIR is not set: refusing chats (set BOT_ALLOW_DEV_DEFAULTS=1 only for local work)")

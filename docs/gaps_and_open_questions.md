@@ -13,12 +13,12 @@
 - [x] **Ringg tools bypass `BOT_STORE_CONFIG_DIR` (`enabled: false`):** Fixed in `bot/server.py` — `/ringg/tools/{tool}` now checks `stores.config_for(ctx)` and refuses disabled or unconfigured stores with `403`.
 - **Single shared keys:**
   - [x] Per-agent `RINGG_TOOLS_KEY` support (`{"<agent_id>": "<secret>"}`) added in `bot/ringg.py` and `bot/server.py` (backwards-compatible with a single string).
-  - [ ] Per-store `BOT_SERVICE_KEY` for `/chat` (currently one shared key covers all stores).
+  - [x] Per-store `BOT_SERVICE_KEY` support (`{"<store_uuid>": "<secret>"}`) added in `bot/store_config.py` and `bot/server.py` (backwards-compatible with a single string).
 
 ### B. Multi-Store & Catalog Gaps (Bot + RAG)
 - **Furniture-only filters & verticals:**
-  - [ ] `ATTRIBUTE_GROUPS` (used by `tool_schemas.py`, `list_attribute_values.py`, `search_products.py`, and `ringg.py`) and `COMPONENT_NAME_PATTERNS` (`search_products.py`) are still hardcoded for furniture.
-  - [ ] `bot/verticals.py` only defines `furniture` and `general` (no electronics, veterinary, or tires/wheels rule packs yet).
+  - [x] Dynamic catalog attribute groups enabled across `bot/tool_schemas.py`, `bot/tools/list_attribute_values.py`, `bot/tools/search_products.py`, and `bot/ringg.py` (with `available_groups` discovery on miss), and `COMPONENT_NAME_PATTERNS` scoped to furniture stores only.
+  - [x] Added `electronics`, `veterinary`, and `tires_wheels` rule packs to `bot/verticals.py` alongside `furniture` and `general`.
 - **Leftover South Jackson hardcoding in shared helpers:**
   - [x] `rag/text_utils.py` boilerplate contact-footer stripping generalized (no longer hardcodes South Jackson's phone/email).
   - [x] `bot/ringg_prompt.py` shared `@store_name` prompt now uses a store-agnostic `StoreConfig` (`--vertical general|furniture`) without South Jackson's `"Rugs and Decor"` or US-only shipping rule.

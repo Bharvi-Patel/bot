@@ -23,7 +23,7 @@ def test_a_group_with_no_values_for_the_keyword_says_so():
 
 
 @pytest.mark.parametrize("bad", [
-    {}, {"group": ""}, {"group": 5}, {"group": "Nope", "keyword": "bed"}, {"group": "Color", "keyword": "bed", "x": 1}])
+    {}, {"group": ""}, {"group": 5}, {"group": "bad;group", "keyword": "bed"}, {"group": "Color", "keyword": "bed", "x": 1}])
 def test_bad_input_is_refused_before_any_request(bad):
     c = CatalogClient(attributes=BED)
     assert "error" in list_attribute_values(bad, client=c) and c.calls == []
@@ -48,3 +48,13 @@ def test_values_are_capped():
     many = [{"group": "Color", "values": [{"id": f"u{i}", "name": f"Shade {i:03d}"} for i in range(100)]}]
     out = list_attribute_values({"group": "Color", "keyword": "rug"}, client=CatalogClient(attributes=many))
     assert len(out["values"]) == 40
+
+
+def test_non_furniture_attribute_groups_work_and_missing_group_lists_available_groups():
+    tv = [{"group": "Screen Size", "values": [{"id": "s1", "name": "55 in"}, {"id": "s2", "name": "65 in"}]},
+          {"group": "Resolution", "values": [{"id": "r1", "name": "4K"}]}]
+    hit = list_attribute_values({"group": "screen size", "keyword": "tv"}, client=CatalogClient(attributes=tv))
+    assert hit["found"] and hit["group"] == "Screen Size" and hit["values"] == [{"value": "55 in"}, {"value": "65 in"}]
+    miss = list_attribute_values({"group": "Refresh Rate", "keyword": "tv"}, client=CatalogClient(attributes=tv))
+    assert miss["found"] is False and miss["available_groups"] == ["Resolution", "Screen Size"]
+

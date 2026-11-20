@@ -450,3 +450,13 @@ def test_the_service_key_is_still_checked_before_the_token_is_looked_at():
     c, spy = client()
     r = c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Bot-Key": "wrong", "X-Customer-Token": TOKEN})
     assert r.status_code == 401 and spy.calls == [] and TOKEN not in r.text
+
+
+def test_per_store_service_keys_isolate_stores_and_reject_cross_store_keys():
+    c, spy = client(key={"store-a": "key-a", "store-b": "key-b"})
+    assert c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Bot-Key": "key-a", "Store-UUID": "store-a"}).status_code == 200
+    assert c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Bot-Key": "key-a", "Store-UUID": "store-b"}).status_code == 401
+    assert c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Bot-Key": "key-b", "Store-UUID": "store-b"}).status_code == 200
+    assert c.post("/chat", json={"message": "hi"}, headers={**GOOD, "X-Bot-Key": "key-a", "Store-UUID": "store-c"}).status_code == 401
+    assert len(spy.calls) == 2
+

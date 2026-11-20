@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from bot.api_client import ApiClient, ApiError, get_client
-from bot.tools.search_products import ATTRIBUTE_GROUPS
+from bot.tools.search_products import _ATTR_GROUP_RE
 
 MAX_VALUES = 40
 ALLOWED_KEYS = {"group", "keyword"}
@@ -22,14 +22,14 @@ def list_attribute_values(args: dict[str, Any], client: ApiClient | None = None,
         return {"error": f"unknown parameter(s): {', '.join(sorted(unknown))}"}
     group = args.get("group")
     if not isinstance(group, str) or not group.strip():
-        return {"error": f"group is required; one of: {', '.join(ATTRIBUTE_GROUPS)}"}
-    match = next((g for g in ATTRIBUTE_GROUPS if g.lower() == group.strip().lower()), None)
-    if match is None:
-        return {"error": f"unknown group. Use one of: {', '.join(ATTRIBUTE_GROUPS)}"}
+        return {"error": "group is required (e.g. Color, Material, Size, Screen Size)"}
+    wanted = group.strip()
+    if not _ATTR_GROUP_RE.match(wanted):
+        return {"error": "group has characters that are not allowed or is too long"}
     keyword = args.get("keyword")
     if not isinstance(keyword, str) or len(keyword.strip()) < 2:
         return {"error": "keyword_required",
-                "note": "Give a keyword of at least 2 letters for the product type (for example 'bed' or 'rug'); the values "
+                "note": "Give a keyword of at least 2 letters for the product type (for example 'bed', 'tv' or 'tire'); the values "
                         "are listed for the products that match it."}
     keyword = keyword.strip()[:100]
 
@@ -38,19 +38,34 @@ def list_attribute_values(args: dict[str, Any], client: ApiClient | None = None,
     except ApiError:
         return {"error": "The attribute list is not available right now. Do not guess values; offer the store's contact details."}
 
+    available: list[str] = []
+    matched_group: str | None = None
     values: list[str] = []
     for g in options:
-        if isinstance(g.get("group"), str) and g["group"].lower() == match.lower():
-            values = [v["name"] for v in g.get("values") or [] if v.get("name")]
-            break
+        gname = g.get("group")
+        if not isinstance(gname, str) or not gname.strip():
+            continue
+        vals = [v["name"] for v in g.get("values") or [] if v.get("name")]
+        if vals:
+            available.append(gname)
+        if gname.lower() == wanted.lower():
+            matched_group = gname
+            values = vals
     if not values:
-        return {"group": match, "keyword": keyword, "found": False,
-                "note": (f"No product matching '{keyword}' has {match} information in the store's data, so search_products cannot "
-                         f"filter by {match} for it. Search without that filter, tell the customer the results are not "
-                         f"filtered by {match}, and never say a product matches unless its name says so.")}
+        out: dict[str, Any] = {
+            "group": matched_group or wanted,
+            "keyword": keyword,
+            "found": False,
+            "note": (f"No product matching '{keyword}' has {wanted} information in the store's data, so search_products cannot "
+                     f"filter by {wanted} for it. Search without that filter, tell the customer the results are not "
+                     f"filtered by {wanted}, and never say a product matches unless its name says so."),
+        }
+        if available:
+            out["available_groups"] = sorted(dict.fromkeys(available), key=str.lower)[:20]
+        return out
     values = sorted(dict.fromkeys(values), key=str.lower)[:MAX_VALUES]
     return {
-        "group": match,
+        "group": matched_group or wanted,
         "keyword": keyword,
         "found": True,
         "values": [{"value": v} for v in values],

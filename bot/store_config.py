@@ -48,6 +48,38 @@ def resolve_store_uuid(ctx: Any = None) -> str | None:
     return sid if valid_store_id(sid) else None
 
 
+def service_key_from_env() -> str | dict[str, str]:
+    """BOT_SERVICE_KEY: either one shared secret string, or a JSON object {"<store_uuid>": "<secret>"} for
+    per-store service keys. Unset = service refuses every chat."""
+    import os
+    raw = os.getenv("BOT_SERVICE_KEY", "").strip()
+    if not raw or not raw.startswith("{"):
+        return raw
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"BOT_SERVICE_KEY must be a secret string or a JSON object: {exc}") from None
+    if not isinstance(data, dict) or not data:
+        raise ValueError("BOT_SERVICE_KEY JSON must be a non-empty object of store_uuid -> secret")
+    out: dict[str, str] = {}
+    for store, secret in data.items():
+        if not valid_store_id(store) or not isinstance(secret, str) or not secret.strip():
+            raise ValueError("BOT_SERVICE_KEY has an invalid store_uuid or empty secret")
+        out[store] = secret.strip()
+    return out
+
+
+def service_key_ok(received: str | None, store_uuid: str | None, expected: str | dict[str, str]) -> bool:
+    """Constant-time check of X-Bot-Key against either a shared key or a per-store key map."""
+    import hmac
+    if isinstance(expected, dict):
+        if not valid_store_id(store_uuid):
+            return False
+        target = expected.get(store_uuid) or ""
+        return bool(target) and bool(received) and hmac.compare_digest(received.encode(), target.encode())
+    return bool(expected) and bool(received) and hmac.compare_digest(received.encode(), expected.encode())
+
+
 def _one_line(value: Any, field: str, limit: int) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{field} must be a non-empty string")

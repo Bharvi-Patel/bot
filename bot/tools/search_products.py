@@ -47,11 +47,13 @@ ALLOWED_KEYS = {
     "color", "material", "attribute_group", "attribute_value", "max_width_in", "sort",
 }
 
-# Attribute groups that exist in the catalog (from the old database snapshot; also used by list_attribute_values).
+# Historical furniture attribute groups (kept for reference/tests); runtime searches accept any attribute group name
+# returned by the store's own API facets so electronics, veterinary, and tires/wheels stores work without changes.
 ATTRIBUTE_GROUPS = [
     "Bar Features", "Bed Size", "Color", "Frame Size", "Item Type", "Leaf Type", "Material",
     "Pattern", "Rug Size", "Shape", "Table Base", "Table Shape", "Table Top",
 ]
+_ATTR_GROUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 &/'\-]{0,59}$")
 
 # Filters the store API cannot be asked for yet, keyed by the argument the model sends.
 UNSUPPORTED = {"max_width_in": "size or width limits"}
@@ -97,12 +99,12 @@ def _prepare(args: dict[str, Any]) -> dict[str, Any]:
         "max_price": _number(args, "max_price"),
         "sort": args.get("sort") or "name",
     }
-    group, value = _text(args, "attribute_group"), _text(args, "attribute_value")
+    group, value = _text(args, "attribute_group", max_len=60), _text(args, "attribute_value")
     if bool(group) != bool(value):
         raise ToolInputError("attribute_group and attribute_value must be given together")
-    canonical = next((g for g in ATTRIBUTE_GROUPS if group and g.lower() == group.lower()), None)
-    if group and canonical is None:
-        raise ToolInputError(f"attribute_group must be one of: {', '.join(ATTRIBUTE_GROUPS)}")
+    if group and not _ATTR_GROUP_RE.match(group):
+        raise ToolInputError("attribute_group has characters that are not allowed")
+    canonical = next((g for g in ATTRIBUTE_GROUPS if group and g.lower() == group.lower()), group)
     # color and material are shortcuts for the Color and Material groups. The API treats several attribute ids as
     # "any of", so only one attribute filter can be used per search.
     wanted_attrs = [(canonical, value)] if canonical else []
@@ -217,13 +219,19 @@ def _resolve_attribute(options: list[dict[str, Any]], group: str, wanted: str) -
     def squash(t: str) -> str:
         return re.sub(r"[^a-z0-9]", "", t.lower())
 
+    available = [g["group"] for g in options if isinstance(g.get("group"), str) and g.get("values")]
     found = next((g for g in options if isinstance(g.get("group"), str) and g["group"].lower() == group.lower()), None)
     values = [x for x in (found or {}).get("values") or [] if x.get("id") and x.get("name")]
     if not values:
-        return {"error": "attribute_not_available",
-                "note": (f"No product matching that keyword has {group} information in the store's data, so the search cannot "
-                         f"filter by {group}. Search again without it, tell the customer the results are not filtered by "
-                         f"{group}, and never say a product matches unless its name says so.")}
+        err: dict[str, Any] = {
+            "error": "attribute_not_available",
+            "note": (f"No product matching that keyword has {group} information in the store's data, so the search cannot "
+                     f"filter by {group}. Search again without it, tell the customer the results are not filtered by "
+                     f"{group}, and never say a product matches unless its name says so."),
+        }
+        if available:
+            err["available_groups"] = sorted(dict.fromkeys(available), key=str.lower)[:20]
+        return err
     hit = next((x for x in values if x["name"].lower() == wanted.lower()), None) or \
         next((x for x in values if squash(x["name"]) == squash(wanted)), None)
     if hit is None:
@@ -232,6 +240,20 @@ def _resolve_attribute(options: list[dict[str, Any]], group: str, wanted: str) -
                         "or search without the filter and say the results are not filtered by it.",
                 "values": sorted({x["name"] for x in values}, key=str.lower)[:20]}
     return {"id": hit["id"], "group": found["group"], "value": hit["name"]}
+
+
+def _hide_components_for(ctx: Any) -> bool:
+    """Only furniture stores use the Box/Decking Board/Dresser Top component-SKU filter."""
+    if not HIDE_COMPONENT_SKUS:
+        return False
+    try:
+        from bot.stores import config_for, is_multi_store
+        from bot.verticals import VERTICALS
+        if not is_multi_store():
+            return True                                # local dev / existing single-store furniture tests
+        return VERTICALS[config_for(ctx).vertical].hide_component_skus
+    except Exception:
+        return False
 
 
 def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=None) -> dict[str, Any]:
@@ -270,7 +292,7 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
 
         lo, hi, sort = v["min_price"], v["max_price"], v["sort"]
         words = keyword.split()[:5] if (keyword and v["category_slug"]) else []   # a category listing has no keyword filter
-        hide_parts = HIDE_COMPONENT_SKUS and v["category_slug"] != COMPONENT_CATEGORY
+        hide_parts = _hide_components_for(ctx) and v["category_slug"] != COMPONENT_CATEGORY
         wanted_brand = _squash(brand_name) if brand_name else None
         price_filtered = lo is not None or hi is not None
 

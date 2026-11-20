@@ -147,7 +147,7 @@ def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     optional rows the model did not need, and sometimes sends integer/decimal rows as strings ("500") or sort as
     "name_asc". Drop blank/placeholder optional rows, coerce numeric strings, and resolve mutually-exclusive rows
     before handing the dict to the store tools."""
-    from bot.tools.search_products import ATTRIBUTE_GROUPS
+    from bot.tools.search_products import _ATTR_GROUP_RE
 
     out: dict[str, Any] = {}
     for k, v in args.items():
@@ -188,8 +188,7 @@ def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
         out.pop("parent_slug", None)
 
     group = out.get("attribute_group")
-    valid_groups = {g.lower() for g in ATTRIBUTE_GROUPS}
-    if not group or not out.get("attribute_value") or not isinstance(group, str) or group.lower() not in valid_groups:
+    if not group or not out.get("attribute_value") or not isinstance(group, str) or not _ATTR_GROUP_RE.match(group):
         out.pop("attribute_group", None)
         out.pop("attribute_value", None)
 

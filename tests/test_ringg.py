@@ -349,6 +349,15 @@ def test_clean_tool_args_drops_blank_rows_and_coerces_numeric_strings():
         "keyword": "sofa",
         "color": "blue",
     }
+    assert ringg.clean_tool_args({
+        "keyword": "tv",
+        "attribute_group": "Screen Size",
+        "attribute_value": "65 in",
+    }) == {
+        "keyword": "tv",
+        "attribute_group": "Screen Size",
+        "attribute_value": "65 in",
+    }
 
 
 def test_resolve_store_accepts_a_sent_store_only_from_the_agents_allowed_list():

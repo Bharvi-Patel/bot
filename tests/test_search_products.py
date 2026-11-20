@@ -461,3 +461,29 @@ def test_two_attribute_filters_in_one_search_are_refused(args):
     c = CatalogClient(beds(3), brands=BRANDS, attributes=BED_SIZE + COLOR)
     out = search_products({"keyword": "bed", **args}, client=c)
     assert "only one of color, material" in out["error"] and c.calls == []
+
+
+def test_non_furniture_attribute_groups_work_and_unknown_group_lists_available_groups():
+    facets = [{"group": "Screen Size", "values": [{"id": "tv-65", "name": "65 in"}]}]
+    c = CatalogClient([item("TV1", "OLED TV 65 in", 999.0)], brands=BRANDS, attributes=facets)
+    out = search_products({"keyword": "tv", "attribute_group": "screen size", "attribute_value": "65 in"}, client=c)
+    assert out["count"] == 1 and out["applied_filters"]["attribute"] == {"group": "Screen Size", "value": "65 in"}
+    assert c.filters[-1]["attribute_ids"] == ["tv-65"]
+    miss = search_products({"keyword": "tv", "attribute_group": "Bed Size", "attribute_value": "Queen"}, client=c)
+    assert miss["error"] == "attribute_not_available" and miss["available_groups"] == ["Screen Size"]
+
+
+def test_component_sku_hiding_applies_only_to_furniture_stores(monkeypatch, tmp_path):
+    from bot import stores
+    from bot.context import ChatContext
+    (tmp_path / "furn-1.json").write_text(json.dumps({"store_name": "Furn", "vertical": "furniture"}))
+    (tmp_path / "elec-1.json").write_text(json.dumps({"store_name": "Elec", "vertical": "electronics"}))
+    monkeypatch.setenv("BOT_STORE_CONFIG_DIR", str(tmp_path))
+    stores.reset()
+    try:
+        furn_out = search_products({"category_slug": "x"}, client=CatalogClient(by_category={"x": _parts()}), ctx=ChatContext(store_uuid="furn-1"))
+        elec_out = search_products({"category_slug": "x"}, client=CatalogClient(by_category={"x": _parts()}), ctx=ChatContext(store_uuid="elec-1"))
+        assert furn_out["count"] == 3 and elec_out["count"] == 7
+    finally:
+        stores.reset()
+

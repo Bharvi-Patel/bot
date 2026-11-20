@@ -62,3 +62,19 @@ def test_shipping_example_comes_from_the_store():
 def test_no_placeholder_is_ever_left_unfilled():
     for cfg in (GENERAL, SOUTH_JACKSON):
         assert not re.search(r"<<\w+>>", render_system_prompt(cfg))
+
+
+@pytest.mark.parametrize("vertical,expected_word", [
+    ("electronics", "TVs"),
+    ("veterinary", "dog food"),
+    ("tires_wheels", "tires, wheels, rims"),
+    ("general", "any type listed"),
+])
+def test_all_non_furniture_verticals_render_cleanly_without_furniture_leaks(vertical, expected_word):
+    cfg = StoreConfig(store_uuid="s-1", store_name="Test Store", vertical=vertical)
+    text = render_system_prompt(cfg)
+    assert text.startswith("You are the shopping assistant for Test Store.")
+    assert expected_word in text and not re.search(r"<<\w+>>", text)
+    for bad in ("South Jackson", "Rugs and Decor", "mattress", "sofa", "dresser", "armoire"):
+        assert bad not in text, bad
+

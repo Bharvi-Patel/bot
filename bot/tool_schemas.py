@@ -2,7 +2,7 @@
 (tests/test_router.py checks this), because the tools reject anything they don't know."""
 from __future__ import annotations
 
-from bot.tools.search_products import ATTRIBUTE_GROUPS, SORTS
+from bot.tools.search_products import SORTS
 
 _STR = {"type": "string"}
 _NUM = {"type": "number"}
@@ -24,15 +24,15 @@ TOOL_DECLARATIONS: list[dict] = [
         "prices. Use for 'show me ...' and 'cheapest ...' questions. Get category_slug from list_categories first. "
         "Shows at most 8 results sorted by name unless you set sort: for cheapest use sort=price_asc, for most expensive price_desc.",
         {
-            "keyword": {**_STR, "description": "Words from the product name, e.g. 'loveseat'."},
+            "keyword": {**_STR, "description": "Words from the product name, e.g. 'loveseat' or 'laptop'."},
             "category_slug": {**_STR, "description": "Slug returned by list_categories."},
             "brand_slug": {**_STR, "description": "Slug returned by list_brands."},
             "min_price": _NUM,
             "max_price": _NUM,
             "color": {**_STR, "description": "A color. Needs keyword. Only one of color, material or attribute_group per search."},
             "material": {**_STR, "description": "A material. Needs keyword. Only one of color, material or attribute_group per search."},
-            "attribute_group": {**_STR, "enum": list(ATTRIBUTE_GROUPS),
-                                "description": "Give together with attribute_value, and with keyword."},
+            "attribute_group": {**_STR,
+                                "description": "Catalog attribute group name (e.g. Color, Bed Size, Screen Size, Tire Size). Give together with attribute_value and keyword."},
             "attribute_value": {**_STR, "description": "Exact value from list_attribute_values (called with the same keyword)."},
             "max_width_in": {**_NUM, "description": "Widest the product may be, in inches."},
             "sort": {**_STR, "enum": list(SORTS)},
@@ -61,7 +61,7 @@ TOOL_DECLARATIONS: list[dict] = [
     _tool(
         "search_policies",
         "Store policy, care instructions, buying guides, FAQs and brand information (returns, warranty, financing, "
-        "delivery policy, cleaning, mattress guides). Answer only from what it returns.",
+        "delivery policy, cleaning, buying guides). Answer only from what it returns.",
         {
             "question": {**_STR, "description": "The customer's question in plain words."},
             "source_types": {"type": "array", "items": {**_STR, "enum": ["policy", "guide", "faq", "brand_info", "blog"]},
@@ -78,10 +78,11 @@ TOOL_DECLARATIONS: list[dict] = [
     _tool("list_brands", "The brands the store carries, with their slugs. Takes no parameters."),
     _tool(
         "list_attribute_values",
-        "The values one attribute group (for example Color or Bed Size) has among the products that match a keyword, so you can "
-        "turn 'queen' into the catalog's own value before calling search_products. Not a store-wide list.",
-        {"group": {**_STR, "enum": list(ATTRIBUTE_GROUPS)},
-         "keyword": {**_STR, "description": "The product type, e.g. 'bed' or 'rug' (at least 2 letters)."}},
+        "The values one attribute group (for example Color, Bed Size, Screen Size or Tire Size) has among the products that "
+        "match a keyword, so you can turn a customer's word into the catalog's own value before calling search_products. "
+        "If the group does not exist for that keyword, the result lists the store's available_groups.",
+        {"group": {**_STR, "description": "Catalog attribute group name (e.g. Color, Material, Size, Screen Size)."},
+         "keyword": {**_STR, "description": "The product type, e.g. 'bed', 'tv' or 'tire' (at least 2 letters)."}},
         ["group", "keyword"],
     ),
     _tool(
