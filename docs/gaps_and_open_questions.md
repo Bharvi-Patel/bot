@@ -27,7 +27,7 @@
   - [ ] **Orders:** `customer_orders` is tested only against a synthetic fixture (`tests/fixtures/api/orders_index_from_controller_code.json`) — never verified against a real customer `/orders` response; no item quantities yet.
   - [x] **Blog pagination:** Confirmed `GET /blogs/active?page=N&limit=50` live and wired full multi-page pagination into `bot/api_client.py` and `rag/api_ingest.py` (`SJ_BLOG_URL` env override added).
   - [x] **Advanced pages (`is_advanced`) & non-variation attributes/colors/promotions:** Verified live on South Jackson (`0/18` pages are `is_advanced`; `attributes`/`colors`/`promotions` are `[]`; `sizes` duplicates `groupedAttributes`/`options`).
-  - [ ] **Remaining API assumptions/limits:** Confirm storefront product/blog URL paths (`SJ_PRODUCT_URL` `/product/{slug}`, `SJ_BLOG_URL` `/blogs/{slug}`); option-priced products have `sku=None`; `max_width_in` is unsupported (`search_products.py`).
+  - [ ] **Remaining API assumptions/limits:** Product URL confirmed & updated to `/p/{slug}` (`SJ_PRODUCT_URL`); blog URL still assumed `/blogs/{slug}` (`SJ_BLOG_URL`, blog route not found on storefront yet); option-priced products have `sku=None`; `max_width_in` is unsupported (`search_products.py`).
 - **Packaging & hygiene:**
   - [x] `mysql-connector-python` moved out of runtime `requirements.txt` into `requirements-dev.txt`.
   - [x] `events/` added to `.gitignore` and untracked from git.
@@ -69,7 +69,7 @@
 
 ### API / `mw` Technical Questions
 - [ ] **Real `/orders` response:** Capture one real test-customer `GET /orders` (and `GET /orders/{id}`) response to confirm exact field names and add item quantities.
-- [ ] **Storefront routes:** Confirm exact storefront URL paths for products (currently assumed `/product/{slug}`) and blogs (currently assumed `/blogs/{slug}`).
+- [ ] **Storefront routes:** Product URL confirmed & updated to `/p/{slug}`; blog storefront URL path still unconfirmed (currently `/blogs/{slug}`, blogs remain opt-in).
 - [ ] **Bot-to-API authentication:** Agree on header name and mechanism for `BOT_API_KEY` (`bot/api_client.py`).
 - [ ] **Public shipping-options endpoint:** Can the API team add a read-only public shipping/pickup endpoint, or stick with shipping policy text?
 - [ ] **API cache (API team):** Fix the unfiltered category cache key (now worked around via `sort_by="az"` in `bot/api_client.py`) and verify the Redis per-store cache prefix in staging/production. *(Blog pagination via `?page=N&limit=M` is confirmed and fixed.)*

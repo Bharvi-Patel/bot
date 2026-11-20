@@ -142,3 +142,13 @@ def test_a_page_that_is_not_a_product_route_goes_straight_to_the_sku(monkeypatch
     monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, **k: asked.append(a) or {"found": False})
     recommend_products({"query": "sofa"}, run_query=runner([row]), embed_query=emb)
     assert asked == [{"sku": "SKU1"}]
+
+
+def test_p_slug_route_is_recognised_for_live_checks(monkeypatch):
+    import bot.tools.get_product_details as gpd
+    asked = []
+    row = {**doc(1, 0.8), "url_path": "/p/rainn-sofa-set-latte"}
+    monkeypatch.setattr(gpd, "get_product_details", lambda a, ctx=None, **k: asked.append(a) or {"found": True, "product": {"name": "Rainn Sofa", "price": 599.0, "sku": "SKU1"}})
+    out = recommend_products({"query": "sofa"}, run_query=runner([row]), embed_query=emb)
+    assert out["count"] == 1 and asked == [{"slug": "rainn-sofa-set-latte"}]
+

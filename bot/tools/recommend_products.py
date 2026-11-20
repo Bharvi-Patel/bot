@@ -49,11 +49,11 @@ def _filters(a: dict) -> tuple[str, list]:
     return sql, params
 
 
-_SLUG_PATH = re.compile(r"^/product/([A-Za-z0-9][A-Za-z0-9_-]{0,200})$")
+_SLUG_PATH = re.compile(r"^/(?:p|product)/([A-Za-z0-9][A-Za-z0-9_-]{0,200})$")
 
 
 def _slug(url_path: str | None) -> str | None:
-    """The product slug when the index row's page is /product/<slug> (the route build_products writes)."""
+    """The product slug when the index row's page is /p/<slug> (or legacy /product/<slug>)."""
     m = _SLUG_PATH.match(url_path or "")
     return m.group(1) if m else None
 

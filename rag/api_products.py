@@ -22,7 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))      # p
 
 from bot.product_docs import compose_document, content_hash
 
-URL = os.environ.get("SJ_PRODUCT_URL", "/product/{slug}")        # ASSUMED storefront route: set SJ_PRODUCT_URL to the real one
+URL = os.environ.get("SJ_PRODUCT_URL", "/p/{slug}")              # confirmed storefront route (mw uses /p/<slug>)
 MAX_PAGES = 200
 
 
