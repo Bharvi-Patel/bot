@@ -26,3 +26,4 @@ rag/pending.jsonl
 eval_phase*_results.json
 
 logs/
+events/
