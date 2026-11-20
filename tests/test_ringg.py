@@ -52,11 +52,14 @@ def test_analysis_gives_callback_and_classification_only():
     assert ev["callback_requested"] is True and ev["classification"] == "callback_requested" and ev["ringg_event"] == "all_processing_completed"
 
 
-def test_the_store_comes_from_the_agent_map_never_the_payload():
-    payload = {**COMPLETED, "custom_args_values": {"store_uuid": "store-evil", "store": "store-evil"}}
-    assert handle(payload)[1]["store"] == STORE
+def test_the_store_is_limited_to_the_agents_allowed_stores_whatever_the_payload_says():
+    evil = {**COMPLETED, "custom_args_values": {"store_uuid": "store-evil", "store": "store-evil"}}
+    assert handle(evil) == ("unknown_agent", None)                                     # a store this agent may not serve: dropped
+    assert handle(COMPLETED)[1]["store"] == STORE                                      # no store sent: the agent's one store
+    assert handle({**COMPLETED, "custom_args_values": {"store_uuid": STORE}})[1]["store"] == STORE
     assert handle({**COMPLETED, "agent_id": "someone-elses-agent"})[0] == "unknown_agent"
     assert handle({**COMPLETED, "agent_id": None})[0] == "unknown_agent"
+    assert handle(COMPLETED, stores={})[0] == "unknown_agent"                          # no map at all: nothing is recorded
 
 
 def test_the_same_event_twice_is_recorded_once_but_other_events_of_that_call_are_kept():
@@ -122,7 +125,11 @@ def test_agent_store_settings(monkeypatch):
     assert ringg.agent_stores_from_env() == {}
     monkeypatch.setenv("RINGG_AGENT_STORES", json.dumps(STORES))
     assert ringg.agent_stores_from_env() == STORES
-    for bad in ("not json", "[]", json.dumps({"a b": "s"}), json.dumps({"a": 5})):
+    shared = {AGENT: [STORE, "store-b"]}
+    monkeypatch.setenv("RINGG_AGENT_STORES", json.dumps(shared))
+    assert ringg.agent_stores_from_env() == shared
+    for bad in ("not json", "[]", json.dumps({"a b": "s"}), json.dumps({"a": 5}), json.dumps({"a": []}),
+                json.dumps({"a": ["ok", "no good"]}), json.dumps({"a": ["ok", 5]})):
         monkeypatch.setenv("RINGG_AGENT_STORES", bad)
         with pytest.raises(ValueError):
             ringg.agent_stores_from_env()
@@ -344,16 +351,47 @@ def test_clean_tool_args_drops_blank_rows_and_coerces_numeric_strings():
     }
 
 
-def test_resolve_store_prefers_explicit_store_uuid_and_falls_back_to_agent_map():
-    stores = {AGENT: STORE}
-    assert ringg.resolve_store(AGENT, stores, "other-store-999") == "other-store-999"
-    assert ringg.resolve_store(AGENT, stores, "") == STORE
-    assert ringg.resolve_store(AGENT, stores, None) == STORE
-    assert ringg.resolve_store("unknown", stores, None) is None
-    what, ev = ringg.handle({**_payload(), "custom_args_values": {"store_uuid": "dynamic-store-1", "conversation_id": "c1"}},
-                            stores, ringg.Seen())
+def test_resolve_store_accepts_a_sent_store_only_from_the_agents_allowed_list():
+    one = {AGENT: STORE}
+    assert ringg.resolve_store(AGENT, one, STORE) == STORE
+    assert ringg.resolve_store(AGENT, one, "other-store-999") is None                  # not this agent's store: refused
+    assert ringg.resolve_store(AGENT, one, "") == STORE                                # blank or placeholder: the agent's one store
+    assert ringg.resolve_store(AGENT, one, "null") == STORE
+    assert ringg.resolve_store(AGENT, one, None) == STORE
+    assert ringg.resolve_store("unknown", one, None) is None
+    assert ringg.resolve_store("unknown", one, STORE) is None                          # an unlisted agent cannot name a store
+    assert ringg.resolve_store(AGENT, {}, STORE) is None                               # empty map: refused, never trusted
+    assert ringg.resolve_store(None, one, STORE) is None
+
+
+def test_a_shared_agent_must_name_one_of_its_stores():
+    shared = {AGENT: [STORE, "dynamic-store-1"]}
+    assert ringg.resolve_store(AGENT, shared, "dynamic-store-1") == "dynamic-store-1"
+    assert ringg.resolve_store(AGENT, shared, STORE) == STORE
+    assert ringg.resolve_store(AGENT, shared, "store-evil") is None
+    assert ringg.resolve_store(AGENT, shared, None) is None                            # several allowed, none named: no guess
+    assert ringg.resolve_store(AGENT, {AGENT: []}, STORE) is None
+    what, ev = ringg.handle({**COMPLETED, "custom_args_values": {"store_uuid": "dynamic-store-1", "conversation_id": "c1"}},
+                            shared, ringg.Seen())
     assert what == "recorded" and ev["store"] == "dynamic-store-1" and ev["conversation"] == "c1"
+    assert ringg.handle({**COMPLETED, "custom_args_values": {"store_uuid": "store-evil"}}, shared, ringg.Seen()) == ("unknown_agent", None)
 
 
+def test_http_tool_store_header_must_be_an_allowed_store():
+    calls = []
+    shared = {AGENT: [STORE, "dynamic-store-1"]}
+    c, _ = _tools_client(calls, stores=shared)
+    ok = c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "dynamic-store-1"})
+    assert ok.status_code == 200 and calls[-1][2].store_uuid == "dynamic-store-1"
+    n = len(calls)
+    assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "store-evil"}).status_code == 403
+    assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "X-Store-Uuid": "store-evil"}).status_code == 403
+    assert c.post("/ringg/tools/list_brands", json={}, headers=TH).status_code == 403          # shared agent, no store named
+    assert len(calls) == n                                                                       # no tool ran for any refusal
 
 
+def test_http_tool_with_no_agent_map_is_refused():
+    calls = []
+    c, _ = _tools_client(calls, stores={})
+    assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "store-evil"}).status_code == 403
+    assert calls == []

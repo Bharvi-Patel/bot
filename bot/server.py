@@ -216,7 +216,7 @@ class _AccessLog:
 def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callable[[], Any] | None = None,
                service_key: str | None = None, limits: Limits | None = None,
                events_sink: "events.EventSink | None" = None, ringg_secret: str | None = None,
-               ringg_agent_stores: dict[str, str] | None = None, ringg_tools_key: str | None = None,
+               ringg_agent_stores: dict[str, Any] | None = None, ringg_tools_key: str | None = None,
                tool_fn: Callable[..., dict] | None = None) -> FastAPI:
     app = FastAPI(title="store chat bot", docs_url=None, redoc_url=None, openapi_url=None)
     key = service_key if service_key is not None else os.getenv("BOT_SERVICE_KEY", "")
@@ -357,7 +357,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         Headers (all set in the agent's API tool in Ringg, none by the caller's voice):
           X-Ringg-Tools-Key  static value, must equal RINGG_TOOLS_KEY (401 otherwise, 503 if unset).
           X-Ringg-Agent-Id   which agent is calling; checked against RINGG_AGENT_STORES (403 if unknown).
-          Store-UUID / X-Store-Uuid  optional Variable row from store_uuid for a shared multi-store agent; falls back to RINGG_AGENT_STORES.
+          Store-UUID / X-Store-Uuid  optional Variable row from store_uuid for a shared multi-store agent; must be one of the stores RINGG_AGENT_STORES allows for this agent (403 otherwise). Without it, an agent with one store uses that store.
           X-Ringg-Call-Id    optional, the call id (a Variable row from call_data.id): rate limit and funnel link.
         Body: the tool's arguments as JSON ({} or empty for list_* tools). The reply is the tool's result."""
         if not tools_key:
@@ -376,7 +376,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
             raise HTTPException(400, "body is not JSON") from None
         if not isinstance(args, dict):
             raise HTTPException(400, "body must be a JSON object")
-        explicit_store = store_uuid or x_store_uuid or args.get("store_uuid") or args.get("store_id")
+        explicit_store = store_uuid or x_store_uuid          # headers only: the body is written by the Ringg model, never trusted for the store
         store = ringg.resolve_store(x_ringg_agent_id, agent_stores, explicit_store)
         if not store:
             raise HTTPException(403, "unknown agent")

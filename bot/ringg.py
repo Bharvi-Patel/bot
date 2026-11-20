@@ -10,9 +10,13 @@ What is NEVER kept: phone numbers (to_number, from_number, called_on...), the tr
 custom_args_values other than the conversation id, the recording URL, tool_call_logs. Those are customer data; storing any
 of them would need its own consent and retention decision, the same rule bot/events.py follows for chat text.
 
-Which store a call belongs to is never read from the payload. It comes from RINGG_AGENT_STORES, a JSON object that maps a
-Ringg agent id to a store id, e.g. {"<agent id>": "<store uuid>"}. An event from an agent that is not in the map is
-acknowledged and dropped (a 4xx would make Ringg retry nothing useful, and the event is not ours to record).
+Which store a call belongs to is decided by RINGG_AGENT_STORES, a JSON object that maps a Ringg agent id to the store(s) it
+may serve: {"<agent id>": "<store uuid>"} for an agent with one store, or {"<agent id>": ["<store uuid>", ...]} for an agent
+shared by several. A store id sent with a call (a Ringg variable set by the storefront, or custom_args_values in an event) is
+only a CHOICE among the stores that agent is allowed to serve: an id outside the list is refused, never trusted. An agent that
+is not in the map gets nothing, and a shared agent must say which of its stores the call is for. An event from an agent or for
+a store that is not allowed is acknowledged and dropped (a 4xx would make Ringg retry nothing useful, and the event is not ours
+to record). A store id in a tool's JSON body is never used: the body is written by Ringg's model, not by the storefront.
 
 Tools the voice agent may call (POST /ringg/tools/<name>): the same store tools the chat uses, minus orders. A phone or browser
 caller is never logged in, so get_order_status is not on the list at all (not merely "returns please log in"). Ringg's own model
@@ -51,8 +55,9 @@ def secret_from_env() -> str:
     return os.getenv("RINGG_WEBHOOK_SECRET", "").strip()
 
 
-def agent_stores_from_env() -> dict[str, str]:
-    """RINGG_AGENT_STORES: {"<ringg agent id>": "<store uuid>"}. Entries with an unusable id are refused at start-up."""
+def agent_stores_from_env() -> dict[str, str | list[str]]:
+    """RINGG_AGENT_STORES: {"<ringg agent id>": "<store uuid>"} or {"<ringg agent id>": ["<store uuid>", ...]} for an agent
+    shared by several stores. Entries with an unusable id are refused at start-up."""
     raw = os.getenv("RINGG_AGENT_STORES", "").strip()
     if not raw:
         return {}
@@ -61,9 +66,11 @@ def agent_stores_from_env() -> dict[str, str]:
     except ValueError as exc:
         raise ValueError(f"RINGG_AGENT_STORES must be a JSON object: {exc}") from None
     if not isinstance(data, dict):
-        raise ValueError("RINGG_AGENT_STORES must be a JSON object of agent id -> store id")
-    for agent, store in data.items():
-        if not isinstance(agent, str) or not _ID.fullmatch(agent) or not isinstance(store, str) or not _ID.fullmatch(store):
+        raise ValueError("RINGG_AGENT_STORES must be a JSON object of agent id -> store id (or a list of store ids)")
+    for agent, stores in data.items():
+        ids = stores if isinstance(stores, list) else [stores]
+        if (not isinstance(agent, str) or not _ID.fullmatch(agent) or not ids
+                or not all(isinstance(s, str) and _ID.fullmatch(s) for s in ids)):
             raise ValueError("RINGG_AGENT_STORES has an agent id or store id with characters that are not allowed")
     return dict(data)
 
@@ -182,17 +189,28 @@ def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def resolve_store(agent_id: str | None, agent_stores: dict[str, str], explicit_store: Any = None) -> str | None:
-    """Resolve the store for a Ringg call or tool request.
-    1. Explicit store_uuid passed from the storefront via Ringg custom variables / header (Store-UUID / X-Store-Uuid / custom_args_values.store_uuid).
-    2. Fallback to RINGG_AGENT_STORES[agent_id] (for dedicated per-store agents or dashboard tests).
-    3. Fallback to BOT_STORE_UUID when the agent is in RINGG_AGENT_STORES or for single-store dev setups."""
+def _allowed_stores(value: Any) -> tuple[str, ...]:
+    """The stores one agent may serve, from its RINGG_AGENT_STORES entry (one id, or a list of ids)."""
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple)):
+        return tuple(v for v in value if isinstance(v, str) and v)
+    return ()
+
+
+def resolve_store(agent_id: str | None, agent_stores: dict[str, Any], explicit_store: Any = None) -> str | None:
+    """The store for a Ringg call or tool request, or None when the call must be refused.
+    1. The agent must be in RINGG_AGENT_STORES. An agent that is not listed (or an empty map) gets None.
+    2. A store id sent with the call is accepted only if it is one of that agent's allowed stores; any other id gives None.
+    3. With no usable store id sent (blank, "null", ...), the agent's single store is used. An agent with several allowed
+       stores must say which one: with none given it gets None, never a guess."""
+    allowed = _allowed_stores(agent_stores.get(agent_id)) if isinstance(agent_id, str) else ()
+    if not allowed:
+        return None
     candidate = _id(explicit_store.strip() if isinstance(explicit_store, str) else explicit_store)
     if candidate and candidate.lower() not in _BLANK_WORDS:
-        return candidate
-    if isinstance(agent_id, str) and agent_id in agent_stores:
-        return agent_stores[agent_id]
-    return None
+        return candidate if candidate in allowed else None
+    return allowed[0] if len(allowed) == 1 else None
 
 
 def build_tool_event(store: str, call_id: str | None, summary: dict, ms: int, now: datetime | None = None) -> dict[str, Any]:
@@ -255,7 +273,7 @@ def build_call_event(payload: dict, store: str, now: datetime | None = None) -> 
     }
 
 
-def handle(payload: Any, agent_stores: dict[str, str], seen: Seen, now: datetime | None = None) -> tuple[str, dict | None]:
+def handle(payload: Any, agent_stores: dict[str, Any], seen: Seen, now: datetime | None = None) -> tuple[str, dict | None]:
     """(what happened, the event to write or None). What happened is one of:
     bad_payload, ignored_type, unknown_agent, duplicate, recorded. The caller answers 400 for bad_payload, 2xx for the rest."""
     if not isinstance(payload, dict) or not _id(payload.get("call_id")) or not isinstance(payload.get("event_type"), str):
