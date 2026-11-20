@@ -1,0 +1,80 @@
+# B3 Priority #9 (Chatbot + Ringg.AI): Gaps & Open Questions
+
+*Last updated: 2026-11-19 · Repo commit `cc8514c` (`950 passed, 1 skipped`)*
+
+---
+
+## 1. Gaps in the Repo
+
+### A. Bugs & Security / Privacy Gaps (Bot Code)
+- [x] **Multi-store prompt bug on max-tool-calls fallback:** Fixed in `bot/router.py` — the final-answer retry now passes `system` (and `tools`), so non–South Jackson stores never fall back to the South Jackson `SYSTEM_PROMPT`.
+- [x] **Customer message text written to disk (`logs/review.jsonl`):** Fixed in `bot/router.py`, `bot/events.py`, and `bot/tracing.py` — `log_for_review` no longer writes customer text during HTTP `/chat` turns unless `BOT_LOG_CUSTOMER_TEXT=1` is explicitly set, and `customer_token` is redacted in tracing.
+- [x] **`get_order_status` offered in tool schemas to visitors:** Fixed in `bot/tool_schemas.py`, `bot/router.py`, `bot/tracing.py`, and all 4 LLM adapters (`llm_gemini.py`, `llm_groq.py`, `llm_ollama.py`, `llm_openai_compat.py`) — visitors only receive `VISITOR_TOOL_DECLARATIONS` (no `get_order_status`).
+- [x] **Ringg tools bypass `BOT_STORE_CONFIG_DIR` (`enabled: false`):** Fixed in `bot/server.py` — `/ringg/tools/{tool}` now checks `stores.config_for(ctx)` and refuses disabled or unconfigured stores with `403`.
+- **Single shared keys:**
+  - [x] Per-agent `RINGG_TOOLS_KEY` support (`{"<agent_id>": "<secret>"}`) added in `bot/ringg.py` and `bot/server.py` (backwards-compatible with a single string).
+  - [ ] Per-store `BOT_SERVICE_KEY` for `/chat` (currently one shared key covers all stores).
+
+### B. Multi-Store & Catalog Gaps (Bot + RAG)
+- **Furniture-only filters & verticals:**
+  - [ ] `ATTRIBUTE_GROUPS` (used by `tool_schemas.py`, `list_attribute_values.py`, `search_products.py`, and `ringg.py`) and `COMPONENT_NAME_PATTERNS` (`search_products.py`) are still hardcoded for furniture.
+  - [ ] `bot/verticals.py` only defines `furniture` and `general` (no electronics, veterinary, or tires/wheels rule packs yet).
+- **Leftover South Jackson hardcoding in shared helpers:**
+  - [x] `rag/text_utils.py` boilerplate contact-footer stripping generalized (no longer hardcodes South Jackson's phone/email).
+  - [x] `bot/ringg_prompt.py` shared `@store_name` prompt now uses a store-agnostic `StoreConfig` (`--vertical general|furniture`) without South Jackson's `"Rugs and Decor"` or US-only shipping rule.
+- [ ] **Mattress index gap (231 vs 569):** Still undiagnosed pending per-category API total vs collected output from `rag/api_products.py`.
+- **Unverified / partial API integrations:**
+  - [ ] **Orders:** `customer_orders` is tested only against a synthetic fixture (`tests/fixtures/api/orders_index_from_controller_code.json`) — never verified against a real customer `/orders` response; no item quantities yet.
+  - [ ] **Blogs:** `rag/api_ingest.py` only reads the first 10 blogs (pagination unknown) and assumes storefront URL `/blogs/{slug}`.
+  - [ ] **Products & pages:** `rag/api_products.py` assumes `/product/{slug}`; option-priced products have `sku=None`; `max_width_in` is unsupported (`search_products.py`); `is_advanced` page-builder pages are skipped (`api_client.py`); non-variation product attributes/promotions aren't parsed yet (`api_client.py`).
+- **Packaging & hygiene:**
+  - [x] `mysql-connector-python` moved out of runtime `requirements.txt` into `requirements-dev.txt`.
+  - [x] `events/` added to `.gitignore` and untracked from git.
+
+### C. Ringg (Phase 2) & Funnel / Dashboard Gaps
+- **Funnel logging gaps (`bot/events.py`):**
+  - [x] `summarize_tool` now records `filters`, `found`, `results`, and validated slugs for `recommend_products` (AI search), plus `found` and `results` for `get_shipping_options`.
+  - [ ] Storefront searches, inquiries, leads/opportunities, actions, and transactions/revenue aren't wired into the funnel log yet (only in-bot searches, chat turns, and Ringg call/tool events are recorded).
+  - [ ] Events only append to local daily `.jsonl` files (single-worker; no database/warehouse sink or dashboard read API yet).
+- **Ringg operational gaps:**
+  - [ ] No Ringg Call History reconciliation job to backfill missed webhooks (and in-memory `Seen` dedupe resets on process restart).
+  - [ ] No outbound follow-up or chat-to-call handoff flows yet.
+  - [ ] No reply-level guardrails on Ringg output (architectural limitation — only prompt + live tools apply).
+  - [ ] No Ringg widget embed in `mw` passing `store_uuid`, `store_name`, `conversation_id`.
+
+### D. Outside This Repo (`mw`, Storefront API, Ops)
+- [ ] **`mw` (Phase 1 Step 6):** Chat widget + backend proxy calling `/chat` with `X-Bot-Key`, `Store-UUID`, `X-Client-Id`, `X-Conversation-Id`, `X-Customer-Uuid`, `X-Customer-Token`.
+- [ ] **Real store setup & hosting:** Create `<store_uuid>.json` configs in `BOT_STORE_CONFIG_DIR`, run RAG ingests per store, deploy on AWS (1 worker, private address next to API).
+- **API-team items (`readme.txt` §5 & §10):**
+  - [ ] `PATCH orders/{id}` missing auth check.
+  - [ ] `GET /stores` returning Turnstile secret.
+  - [ ] Product API exposing `base_price`.
+  - [ ] Confirming Redis per-store cache prefix in staging/production.
+  - [ ] Fixing unfiltered `/categories/{slug}/products` cache key (currently worked around in `bot/api_client.py`).
+  - [ ] Adding a public shipping-options endpoint (optional).
+
+---
+
+## 2. Open Questions
+
+### Product / Client Decisions
+- **Ringg's role in the customer journey:**
+  - [x] **Voice vs text chat:** Decided — Ringg for voice/call agents only (no order lookup); our own backend LLM for website text chat.
+  - [ ] **Voice channel scope:** Inbound/webcall only, outbound lead follow-up, chat-to-call handoff, or all three?
+- [ ] **Guest checkout & orders:** Do B3 stores allow guest checkout? (Decides whether guests are redirected to store contact or need a dedicated order+email API endpoint.)
+- [ ] **Storing chat text:** Is storing customer questions allowed with consent/retention? *(Default in HTTP service is now OFF unless `BOT_LOG_CUSTOMER_TEXT=1`.)*
+- [ ] **Dashboard location & event storage:** Where do the dashboard and its API live (existing API repo or separate app), and where should funnel events be stored long-term (Postgres/ClickHouse/S3 instead of local `.jsonl` files)?
+- [ ] **AI provider & monthly budget:** Which LLM provider/model is approved for production chat (Mistral `ministral-8b` / OpenAI `gpt-4o-mini` / Gemini `gemini-2.5-flash` / Groq) and what is the monthly budget cap?
+
+### API / `mw` Technical Questions
+- [ ] **Real `/orders` response:** Capture one real test-customer `GET /orders` (and `GET /orders/{id}`) response to confirm exact field names and add item quantities.
+- [ ] **Storefront routes:** Confirm exact storefront URL paths for products (currently assumed `/product/{slug}`) and blogs (currently assumed `/blogs/{slug}`).
+- [ ] **Bot-to-API authentication:** Agree on header name and mechanism for `BOT_API_KEY` (`bot/api_client.py`).
+- [ ] **Public shipping-options endpoint:** Can the API team add a read-only public shipping/pickup endpoint, or stick with shipping policy text?
+- [ ] **API pagination & cache:** Confirm how `GET /blogs/active` paginates past 10 posts, fix the unfiltered category cache key, and verify the Redis per-store cache prefix in staging/production.
+- [ ] **Mattress count (231 vs 569):** Run `rag/api_products.py` with the per-category diagnostic to confirm whether ~338 products are hidden/inactive in the API or lost during pagination.
+- [ ] **Future pricing (Priorities #3 & #7):** Confirm response fields once `customer_groups_price` and monthly/weekly pricing land in the API.
+
+### Deployment / Ops Questions
+- [ ] **AWS hosting & scaling:** Decide where on AWS the bot service runs and who deploys it. *(Note: rate limits, concurrency gate, and Ringg webhook dedupe are in-memory today, so multi-worker scaling requires Redis.)*
+- [ ] **Priority #1 traffic filtering:** Confirm foreign/bot traffic is blocked before reaching `mw` / the Ringg widget so it does not inflate funnel counts or Ringg session costs.
