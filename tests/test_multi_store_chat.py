@@ -185,3 +185,29 @@ def test_the_bot_package_no_longer_reads_the_storefront_database_for_brands_or_s
     for name in ("bot/router.py", "bot/tools/get_shipping_options.py"):
         text = (pathlib.Path(__file__).resolve().parents[1] / name).read_text(encoding="utf8")
         assert "bot.db" not in text and "vw_chat" not in text, name
+
+
+def test_final_answer_retry_after_tool_limit_keeps_the_stores_system_prompt(two_stores, monkeypatch):
+    from bot.llm_base import ToolCall
+    monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100"})
+
+    class LoopingLLM:
+        def __init__(self):
+            self.turns = [
+                LLMTurn(tool_calls=[ToolCall("get_store_info", {"a": 1})]),
+                LLMTurn(tool_calls=[ToolCall("get_store_info", {"a": 2})]),
+                LLMTurn(tool_calls=[ToolCall("get_store_info", {"a": 3})]),
+                LLMTurn(text="Please call 555-0100."),
+            ]
+            self.systems = []
+
+        def generate(self, messages, system=None):
+            self.systems.append(system)
+            return self.turns.pop(0)
+
+    llm = LoopingLLM()
+    out = router.answer("what is your phone number", llm, max_calls=1, ctx=ChatContext(store_uuid="beta-1"))
+    assert out["reply"] == "Please call 555-0100."
+    assert len(llm.systems) == 4
+    assert all(s and s.startswith("You are the shopping assistant for Beta Pet Supplies.") for s in llm.systems)
+

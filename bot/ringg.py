@@ -75,14 +75,37 @@ def agent_stores_from_env() -> dict[str, str | list[str]]:
     return dict(data)
 
 
-def tools_key_from_env() -> str:
-    """RINGG_TOOLS_KEY: the value of the static header the agent's API tools send (X-Ringg-Tools-Key). Unset = tools refuse."""
-    return os.getenv("RINGG_TOOLS_KEY", "").strip()
+def tools_key_from_env() -> str | dict[str, str]:
+    """RINGG_TOOLS_KEY: either a single shared secret string, or a JSON object {"<agent id>": "<secret>"} for
+    per-agent keys. Unset = tools refuse."""
+    raw = os.getenv("RINGG_TOOLS_KEY", "").strip()
+    if not raw or not raw.startswith("{"):
+        return raw
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"RINGG_TOOLS_KEY must be a secret string or a JSON object: {exc}") from None
+    if not isinstance(data, dict) or not data:
+        raise ValueError("RINGG_TOOLS_KEY JSON must be a non-empty object of agent id -> secret")
+    out: dict[str, str] = {}
+    for agent, key in data.items():
+        if not isinstance(agent, str) or not _ID.fullmatch(agent) or not isinstance(key, str) or not key.strip():
+            raise ValueError("RINGG_TOOLS_KEY has an invalid agent id or empty secret")
+        out[agent] = key.strip()
+    return out
 
 
 def secret_ok(received: str | None, expected: str) -> bool:
-    """Constant-time check of the X-Webhook-Secret header. An unset expected secret never matches."""
+    """Constant-time check of a shared secret header. An unset expected secret never matches."""
     return bool(expected) and bool(received) and hmac.compare_digest(received.encode(), expected.encode())
+
+
+def tools_key_ok(received: str | None, agent_id: str | None, expected: str | dict[str, str]) -> bool:
+    """Check X-Ringg-Tools-Key against either a single shared key or a per-agent key map."""
+    if isinstance(expected, dict):
+        target = expected.get(agent_id) if isinstance(agent_id, str) else None
+        return secret_ok(received, target or "")
+    return secret_ok(received, expected)
 
 
 class Seen:

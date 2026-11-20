@@ -58,8 +58,13 @@ class GeminiChat:
         flush()
         return contents
 
-    def generate(self, messages: list[dict], system: str | None = None) -> LLMTurn:
-        config = self._config if system is None else self._config.model_copy(update={"system_instruction": system})
+    def generate(self, messages: list[dict], system: str | None = None, tools: list[dict] | None = None) -> LLMTurn:
+        updates: dict = {}
+        if system is not None:
+            updates["system_instruction"] = system
+        if tools is not None:
+            updates["tools"] = [self._types.Tool(function_declarations=tools)]
+        config = self._config if not updates else self._config.model_copy(update=updates)
         resp = self._client.models.generate_content(
             model=self.model, contents=self._contents(messages), config=config)
         if not resp.candidates or resp.candidates[0].content is None:

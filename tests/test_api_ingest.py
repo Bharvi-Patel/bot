@@ -159,3 +159,10 @@ def test_the_command_line_refuses_a_bad_page_type_before_doing_anything():
     for bad in ("nectar", "nectar=color", "=policy"):
         with pytest.raises(SystemExit):
             ai.main(["store-a", "--page-type", bad])
+
+
+def test_strip_boilerplate_removes_any_stores_trailing_contact_footer():
+    from rag.text_utils import strip_boilerplate
+    body = "Returns are accepted within 30 days.\nCall (555) 123-4567\n\nhelp@acmevet.com"
+    assert strip_boilerplate(body) == "Returns are accepted within 30 days."
+

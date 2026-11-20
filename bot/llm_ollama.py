@@ -93,11 +93,12 @@ class OllamaChat:
             return os.environ.get("SJ_REASONING_EFFORT", "low") or None
         return False                                             # everything else: no thinking (a model without the setting is retried bare)
 
-    def _payload(self, messages: list[dict], think: bool | str | None) -> dict:
+    def _payload(self, messages: list[dict], think: bool | str | None, tools: list[dict] | None = None) -> dict:
         options: dict = {"temperature": self.temperature, "num_ctx": self.num_ctx}
         if self.num_predict > 0:
             options["num_predict"] = self.num_predict
-        body: dict = {"model": self.model, "messages": messages, "tools": self._tools, "stream": False,
+        tool_defs = self._tools if tools is None else _tools_payload(tools)
+        body: dict = {"model": self.model, "messages": messages, "tools": tool_defs, "stream": False,
                       "keep_alive": self.keep_alive, "options": options}
         if think is not None:
             body["think"] = think
@@ -109,13 +110,13 @@ class OllamaChat:
             raise httpx.HTTPStatusError(f"{resp.status_code}: {resp.text[:400]}", request=resp.request, response=resp)
         return resp.json()
 
-    def generate(self, messages: list[dict], system: str | None = None) -> LLMTurn:
+    def generate(self, messages: list[dict], system: str | None = None, tools: list[dict] | None = None) -> LLMTurn:
         payload = self._messages(messages, system)
         think = self._think()
         data: dict = {}
         for attempt in range(3):
             try:
-                data = self._post(self._payload(payload, think))
+                data = self._post(self._payload(payload, think, tools=tools))
                 break
             except httpx.TimeoutException as e:
                 raise RuntimeError(

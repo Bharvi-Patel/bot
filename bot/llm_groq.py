@@ -83,19 +83,20 @@ class GroqChat:
                 out.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(m["result"], default=str)})
         return out
 
-    def _create(self, payload: list[dict]):
-        kw: dict = dict(model=self.model, messages=payload, tools=self._tools, tool_choice="auto",
+    def _create(self, payload: list[dict], tools: list[dict] | None = None):
+        tool_defs = self._tools if tools is None else _tools_payload(tools)
+        kw: dict = dict(model=self.model, messages=payload, tools=tool_defs, tool_choice="auto",
                         temperature=self.temperature)
         effort = os.environ.get("SJ_REASONING_EFFORT", "low")    # gpt-oss thinks before answering; "low" = faster, far fewer tokens
         if effort and ("gpt-oss" in self.model or "qwen3.8" in self.model):   # models with a reasoning_effort setting
             kw["reasoning_effort"] = effort
         return self._client.chat.completions.create(**kw)
 
-    def generate(self, messages: list[dict], system: str | None = None) -> LLMTurn:
+    def generate(self, messages: list[dict], system: str | None = None, tools: list[dict] | None = None) -> LLMTurn:
         payload = self._messages(messages, system)
         for attempt in range(3):
             try:
-                resp = self._create(payload)
+                resp = self._create(payload, tools=tools)
                 break
             except Exception as e:
                 if "tool_use_failed" not in str(e) or attempt == 2:

@@ -137,3 +137,11 @@ def test_reasoning_effort_also_sent_for_qwen38(monkeypatch):
     fake = FakeClient(reply("a"))
     GroqChat(model="qwen/qwen3.8-27b", client=fake).generate([{"role": "user", "text": "x"}])
     assert fake.sent[0]["reasoning_effort"] == "low"
+
+
+def test_per_turn_tools_override_is_sent_to_provider():
+    from bot.tool_schemas import VISITOR_TOOL_DECLARATIONS
+    fake = FakeClient(reply("a"))
+    GroqChat(client=fake).generate([{"role": "user", "text": "x"}], tools=VISITOR_TOOL_DECLARATIONS)
+    names = {t["function"]["name"] for t in fake.sent[0]["tools"]}
+    assert "get_order_status" not in names and "search_products" in names

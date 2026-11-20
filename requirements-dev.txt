@@ -1,0 +1,4 @@
+# Development & local eval scripts only (dev_tools/db.py, root eval scripts).
+# The runtime bot service and API ingests never connect to MySQL.
+-r requirements.txt
+mysql-connector-python>=8.4

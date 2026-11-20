@@ -63,6 +63,22 @@ def test_other_tools_record_only_that_they_ran():
     assert events.summarize_tool("list_brands", {}, {"brands": [1, 2]}) == {"name": "list_brands", "ok": True}
 
 
+def test_recommend_products_and_shipping_summaries_hold_only_counts_and_flags():
+    rec = events.summarize_tool(
+        "recommend_products",
+        {"query": "firm mattress for my bad back", "max_price": 700, "category_slug": "mattresses", "brand_slug": "sealy"},
+        {"found": True, "products": [{"sku": "M1", "name": "Secret Mattress"}] * 2},
+    )
+    assert rec == {"name": "recommend_products", "ok": True, "filters": ["category", "brand", "price"],
+                   "found": True, "results": 2, "category": "mattresses", "brand": "sealy"}
+    assert "bad back" not in json.dumps(rec) and "Secret Mattress" not in json.dumps(rec)
+    assert events.summarize_tool("recommend_products", {"query": "anything"}, {"found": False}) == \
+        {"name": "recommend_products", "ok": True, "filters": [], "found": False, "results": 0}
+    ship = events.summarize_tool("get_shipping_options", {"zone_keyword": "Canada"}, {"found": True, "chunks": [{"content": "x"}] * 2})
+    assert ship == {"name": "get_shipping_options", "ok": True, "found": True, "results": 2}
+    assert "Canada" not in json.dumps(ship)
+
+
 @pytest.mark.parametrize("args,result", [(None, None), ("text", [1]), ({"keyword": object()}, {"count": "5"}), ({}, {"count": True}),
                                          ({}, {"count": -3}), ({}, {"count": 10**9})])
 def test_odd_inputs_never_break_a_summary(args, result):

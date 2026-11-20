@@ -43,6 +43,11 @@ MAX_TOOL_EVENTS = 12                                    # the router allows only
 _collector: ContextVar[list[dict] | None] = ContextVar("bot_event_collector", default=None)
 
 
+def is_collecting() -> bool:
+    """True inside collect() (i.e. an active HTTP service turn)."""
+    return _collector.get() is not None
+
+
 @contextmanager
 def collect() -> Iterator[list[dict]]:
     """Everything record_tool() sees inside this block is appended to the yielded list (in the same thread/context)."""
@@ -103,9 +108,25 @@ def summarize_tool(name: str, args: Any, result: Any) -> dict[str, Any]:
             for key, field in (("category", "category_slug"), ("brand", "brand_slug")):
                 if (slug := _slug(args.get(field))):
                     ev[key] = slug                      # only after the tool accepted it, so it is a real catalog slug
+    elif name == "recommend_products":
+        kinds = []
+        if args.get("category_slug"):
+            kinds.append("category")
+        if args.get("brand_slug"):
+            kinds.append("brand")
+        if args.get("min_price") is not None or args.get("max_price") is not None:
+            kinds.append("price")
+        ev["filters"] = kinds
+        if ev["ok"]:
+            ev["found"] = result.get("found") is True
+            products = result.get("products")
+            ev["results"] = _count(len(products)) if isinstance(products, list) else 0
+            for key, field in (("category", "category_slug"), ("brand", "brand_slug")):
+                if (slug := _slug(args.get(field))):
+                    ev[key] = slug
     elif name == "get_product_details" and ev["ok"]:
         ev["found"] = result.get("found") is True
-    elif name == "search_policies" and ev["ok"]:
+    elif name in ("search_policies", "get_shipping_options") and ev["ok"]:
         ev["found"] = result.get("found") is True
         ev["results"] = _count(len(result["chunks"])) if isinstance(result.get("chunks"), list) else 0
     elif name == "get_order_status" and ev["ok"]:

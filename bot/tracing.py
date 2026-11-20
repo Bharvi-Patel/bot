@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import inspect
 import logging
 import os
 import re
@@ -22,7 +23,7 @@ log = logging.getLogger(__name__)
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,190}\.[A-Za-z]{2,24}")
 _PHONE = re.compile(r"\(?\b\d{3}\)?[\s.\-\u2011]{0,2}\d{3}[\s.\-\u2011]\d{4}\b")
 _LONG_NUMBER = re.compile(r"\b\d{9,}\b")                     # order numbers look like 102500001
-_SECRET_KEYS = {"email", "billing_email", "password", "api_key", "authorization", "customer_uuid", "client_id"}
+_SECRET_KEYS = {"email", "billing_email", "password", "api_key", "authorization", "customer_uuid", "customer_token", "client_id"}
 
 
 def mask(data: Any) -> Any:
@@ -163,10 +164,23 @@ def _view(messages: list[dict]) -> list[dict]:
     return out
 
 
-def generate(llm: Any, messages: list[dict], system: str | None = None):
-    """llm.generate(messages) as a traced generation, with the tokens it used. A per-store system prompt is passed
-    only when there is one, so an adapter that has no such parameter keeps working."""
-    call = (lambda: llm.generate(messages)) if system is None else (lambda: llm.generate(messages, system=system))
+def _accepts_kw(fn: Any, name: str) -> bool:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def generate(llm: Any, messages: list[dict], system: str | None = None, tools: list[dict] | None = None):
+    """llm.generate(messages) as a traced generation, with the tokens it used. Per-store system prompt and per-turn
+    tool declarations are passed only when provided and accepted by the adapter, so test fakes keep working."""
+    kw: dict[str, Any] = {}
+    if system is not None:
+        kw["system"] = system
+    if tools is not None and _accepts_kw(llm.generate, "tools"):
+        kw["tools"] = tools
+    call = (lambda: llm.generate(messages)) if not kw else (lambda: llm.generate(messages, **kw))
     if _client is None:
         return call()
     before = getattr(llm, "tokens", 0) or 0
@@ -176,6 +190,7 @@ def generate(llm: Any, messages: list[dict], system: str | None = None):
         gen.update(output={"text": turn.text, "tool_calls": [{"name": c.name, "args": c.args} for c in turn.tool_calls]},
                    **({"usage_details": {"total": used}} if used > 0 else {}))
         return turn
+
 
 
 _init()

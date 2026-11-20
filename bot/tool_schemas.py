@@ -108,3 +108,11 @@ TOOL_DECLARATIONS: list[dict] = [
         [],
     ),
 ]
+
+# Tools offered to a visitor (not logged in): sensitive account tools such as get_order_status are omitted.
+VISITOR_TOOL_DECLARATIONS: list[dict] = [d for d in TOOL_DECLARATIONS if d["name"] != "get_order_status"]
+
+
+def declarations_for(logged_in: bool) -> list[dict]:
+    """Tool schemas offered to the model for this turn."""
+    return TOOL_DECLARATIONS if logged_in else VISITOR_TOOL_DECLARATIONS

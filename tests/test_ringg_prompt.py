@@ -51,4 +51,9 @@ def test_default_shared_prompt_uses_store_name_variable_without_south_jackson():
     text = ringg_prompt(channel="voice")
     assert "@store_name" in text
     assert "South Jackson" not in text
+    assert "Rugs and Decor" not in text
+    assert "only within the USA" not in text
+    furn = ringg_prompt(channel="voice", vertical="furniture")
+    assert "@store_name" in furn and "beds, desks, rugs" in furn and "Rugs and Decor" not in furn
+
 

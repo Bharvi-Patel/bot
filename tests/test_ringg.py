@@ -395,3 +395,49 @@ def test_http_tool_with_no_agent_map_is_refused():
     c, _ = _tools_client(calls, stores={})
     assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "store-evil"}).status_code == 403
     assert calls == []
+
+
+def test_per_agent_tools_keys_from_env_and_check(monkeypatch):
+    monkeypatch.delenv("RINGG_TOOLS_KEY", raising=False)
+    assert ringg.tools_key_from_env() == ""
+    monkeypatch.setenv("RINGG_TOOLS_KEY", "shared-secret")
+    assert ringg.tools_key_from_env() == "shared-secret"
+    assert ringg.tools_key_ok("shared-secret", "any-agent", "shared-secret")
+    assert not ringg.tools_key_ok("wrong", "any-agent", "shared-secret")
+
+    per_agent = {"agent-a": "key-a", "agent-b": "key-b"}
+    monkeypatch.setenv("RINGG_TOOLS_KEY", json.dumps(per_agent))
+    loaded = ringg.tools_key_from_env()
+    assert loaded == per_agent
+    assert ringg.tools_key_ok("key-a", "agent-a", loaded)
+    assert not ringg.tools_key_ok("key-a", "agent-b", loaded)
+    assert not ringg.tools_key_ok("key-a", "unknown", loaded)
+    assert not ringg.tools_key_ok("key-a", None, loaded)
+
+    for bad in ("{not json", "{}", json.dumps({"bad id": "k"}), json.dumps({"agent-a": ""})):
+        monkeypatch.setenv("RINGG_TOOLS_KEY", bad)
+        with pytest.raises(ValueError):
+            ringg.tools_key_from_env()
+
+
+def test_http_tool_respects_per_agent_keys_and_disabled_store_config(monkeypatch, tmp_path):
+    from bot import stores
+    (tmp_path / f"{STORE}.json").write_text(json.dumps({"store_name": "Enabled Store", "enabled": True}))
+    (tmp_path / "disabled-store.json").write_text(json.dumps({"store_name": "Off Store", "enabled": False}))
+    monkeypatch.setenv("BOT_STORE_CONFIG_DIR", str(tmp_path))
+    stores.reset()
+    try:
+        calls = []
+        c, _ = _tools_client(
+            calls,
+            stores={"agent-a": [STORE, "disabled-store", "missing-store"], "agent-b": [STORE]},
+            key={"agent-a": "key-a", "agent-b": "key-b"},
+        )
+        assert c.post("/ringg/tools/list_brands", json={}, headers={"X-Ringg-Tools-Key": "key-a", "X-Ringg-Agent-Id": "agent-a", "Store-UUID": STORE}).status_code == 200
+        assert c.post("/ringg/tools/list_brands", json={}, headers={"X-Ringg-Tools-Key": "key-a", "X-Ringg-Agent-Id": "agent-b", "Store-UUID": STORE}).status_code == 401
+        assert c.post("/ringg/tools/list_brands", json={}, headers={"X-Ringg-Tools-Key": "key-a", "X-Ringg-Agent-Id": "agent-a", "Store-UUID": "disabled-store"}).status_code == 403
+        assert c.post("/ringg/tools/list_brands", json={}, headers={"X-Ringg-Tools-Key": "key-a", "X-Ringg-Agent-Id": "agent-a", "Store-UUID": "missing-store"}).status_code == 403
+        assert len(calls) == 1
+    finally:
+        stores.reset()
+

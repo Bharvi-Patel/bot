@@ -99,8 +99,10 @@ class OpenAICompatChat(GroqChat):
             time.sleep(wait)
         self._last_call = time.monotonic()
 
-    def _create(self, payload: list[dict]):
+    def _create(self, payload: list[dict], tools: list[dict] | None = None):
         # No reasoning_effort here: it is a Groq/OpenAI-specific field that other gateways may reject.
+        from bot.llm_groq import _tools_payload
         self._throttle()
-        return self._client.chat.completions.create(model=self.model, messages=payload, tools=self._tools,
+        tool_defs = self._tools if tools is None else _tools_payload(tools)
+        return self._client.chat.completions.create(model=self.model, messages=payload, tools=tool_defs,
                                                     tool_choice="auto", temperature=self.temperature)

@@ -69,7 +69,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bot import events, ringg, stores
 from bot.context import ChatContext
 from bot.service_limits import ConcurrencyGate, SlidingWindowLimiter
-from bot.store_config import valid_store_id
+from bot.store_config import StoreNotConfigured, valid_store_id
 
 log = logging.getLogger(__name__)
 access_log = logging.getLogger("bot.access")
@@ -216,7 +216,7 @@ class _AccessLog:
 def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callable[[], Any] | None = None,
                service_key: str | None = None, limits: Limits | None = None,
                events_sink: "events.EventSink | None" = None, ringg_secret: str | None = None,
-               ringg_agent_stores: dict[str, Any] | None = None, ringg_tools_key: str | None = None,
+               ringg_agent_stores: dict[str, Any] | None = None, ringg_tools_key: str | dict[str, str] | None = None,
                tool_fn: Callable[..., dict] | None = None) -> FastAPI:
     app = FastAPI(title="store chat bot", docs_url=None, redoc_url=None, openapi_url=None)
     key = service_key if service_key is not None else os.getenv("BOT_SERVICE_KEY", "")
@@ -362,7 +362,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         Body: the tool's arguments as JSON ({} or empty for list_* tools). The reply is the tool's result."""
         if not tools_key:
             raise HTTPException(503, "voice tools are not configured")
-        if not ringg.secret_ok(x_ringg_tools_key, tools_key):
+        if not ringg.tools_key_ok(x_ringg_tools_key, x_ringg_agent_id, tools_key):
             raise HTTPException(401, "unauthorized")
         if tool_name not in ringg.VOICE_TOOLS:
             raise HTTPException(404, "no such tool")
@@ -380,6 +380,12 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         store = ringg.resolve_store(x_ringg_agent_id, agent_stores, explicit_store)
         if not store:
             raise HTTPException(403, "unknown agent")
+        ctx = ChatContext(store_uuid=store, client_id=f"ringg:{call_id or x_ringg_agent_id}"[:128])     # a visitor: no customer id or token
+        if stores.is_multi_store():
+            try:
+                stores.config_for(ctx)
+            except StoreNotConfigured:
+                raise HTTPException(403, "store is not configured") from None
         args = ringg.clean_tool_args(args)
         for limiter, rate_key in ((client_limiter, f"{store}|ringg:{call_id or x_ringg_agent_id}"), (store_limiter, store)):
             allowed, wait = limiter.allow(rate_key)
@@ -390,7 +396,6 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         fn = tool_fn
         if fn is None:
             from bot.guardrails import run_tool as fn
-        ctx = ChatContext(store_uuid=store, client_id=f"ringg:{call_id or x_ringg_agent_id}"[:128])     # a visitor: no customer id or token
         started = time.perf_counter()
         try:
             result = await run_in_threadpool(fn, tool_name, args, ctx)

@@ -290,3 +290,37 @@ def test_cheapest_search_limited_to_a_category_is_retried_without_the_category()
     assert g.superlative_search_lacks_keyword("show me queen beds", scoped) is None
     assert "WITHOUT category_slug" in g.UNCATEGORIZED_NUDGE and "answer from your category result" in g.UNCATEGORIZED_NUDGE
     assert "category_slug" in g.KEYWORD_NUDGE and "WITHOUT" not in g.KEYWORD_NUDGE       # the no-keyword nudge keeps the category
+
+
+def test_review_log_does_not_write_customer_text_during_service_turns_unless_opted_in(monkeypatch, tmp_path):
+    from bot import events
+    monkeypatch.delenv("BOT_LOG_CUSTOMER_TEXT", raising=False)
+    monkeypatch.delenv("BOT_REVIEW_LOG", raising=False)
+    monkeypatch.setitem(g.TOOLS, "get_product_details", lambda a, ctx=None: {"sale_price": 899.0})
+    with events.collect():
+        out = router.answer("private question text", FakeLLM(call("get_product_details", sku="X"), say("It costs $799.")))
+    assert out["blocked"] == "unverified_price"
+    assert not (tmp_path / "review.jsonl").exists()
+    monkeypatch.setenv("BOT_LOG_CUSTOMER_TEXT", "1")
+    with events.collect():
+        router.answer("opted-in question text", FakeLLM(call("get_product_details", sku="X"), say("It costs $799.")))
+    assert "opted-in question text" in (tmp_path / "review.jsonl").read_text()
+
+
+def test_visitors_are_not_offered_get_order_status_in_tool_declarations_but_logged_in_customers_are():
+    class ToolAwareLLM:
+        def __init__(self):
+            self.seen_tools = []
+
+        def generate(self, messages, system=None, tools=None):
+            self.seen_tools.append(tools)
+            return say("Hello.")
+
+    visitor_llm = ToolAwareLLM()
+    router.answer("hi", visitor_llm, ctx=ChatContext(store_uuid="store-a"))
+    assert visitor_llm.seen_tools[0] is not None
+    assert "get_order_status" not in {d["name"] for d in visitor_llm.seen_tools[0]}
+
+    logged_in_llm = ToolAwareLLM()
+    router.answer("hi", logged_in_llm, ctx=ChatContext(store_uuid="store-a", customer_token="tok-1234567890123456"))
+    assert logged_in_llm.seen_tools[0] is None          # full default declarations (including get_order_status)

@@ -21,6 +21,7 @@ from bot.guardrails import (CONTACT_UNTRUSTED_TOOLS, FALLBACK, SYSTEM_PROMPT, OR
 from bot.prompt import extraction_reply, render_system_prompt
 from bot.store_config import StoreNotConfigured
 from bot.stores import UNAVAILABLE_REPLY, config_for
+from bot.tool_schemas import VISITOR_TOOL_DECLARATIONS
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +46,12 @@ def _clean_history(history: list[dict] | None) -> list[dict]:
 
 
 def log_for_review(question: str, reason: str, tools_used: list[str]) -> None:
-    """Questions the bot could not answer well, for the weekly review. Emails are removed; best effort only."""
+    """Questions the bot could not answer well, for local/eval review. Disabled during HTTP service turns unless
+    BOT_LOG_CUSTOMER_TEXT=1 is explicitly set, so customer chat text is never persisted by default."""
+    if os.getenv("BOT_REVIEW_LOG") == "0":
+        return
+    if events.is_collecting() and os.getenv("BOT_LOG_CUSTOMER_TEXT") != "1":
+        return
     try:
         REVIEW_LOG.parent.mkdir(exist_ok=True)
         row = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "reason": reason,
@@ -123,9 +129,11 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     search_calls: list[dict] = []                       # arguments of the product searches that really ran
     seen_calls: dict[str, dict] = {}                    # identical repeat calls in one turn are answered from here and cost nothing
 
+    tool_decls = None if getattr(ctx, "customer_token", None) else VISITOR_TOOL_DECLARATIONS
+
     for _ in range(max_calls + 2):                      # room for the limit message and one last answer
         try:
-            turn = tracing.generate(llm, messages, system)
+            turn = tracing.generate(llm, messages, system, tools=tool_decls)
         except Exception:
             log.exception("llm call failed")
             reason = "llm_error"
@@ -199,7 +207,7 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     if reply is None and reason is None and tools_used:                # ran out of turns still calling tools: ask once for an answer, no tools
         messages.append({"role": "user", "text": FINAL_ANSWER_NUDGE})
         try:
-            last = tracing.generate(llm, messages)
+            last = tracing.generate(llm, messages, system, tools=tool_decls)
             if not last.tool_calls and (last.text or "").strip():
                 reply = last.text
         except Exception:

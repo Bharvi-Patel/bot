@@ -29,7 +29,7 @@ def strip_boilerplate(t):
     t = re.sub(r"^[\U0001F300-\U0001FAFF\u2600-\u27BF]\ufe0f?\n", "", t, flags=re.M)
     t = re.sub(r"^- [→✓✗] ", "- ", t, flags=re.M)
     t = re.sub(r"^(Contact Us|Shop Mattresses|View Financing|Shop Now|Shop All|Apply Now|shop now|shop all) ?$", "", t, flags=re.M)
-    t = re.sub(r"\n(?:Call )?\(731\) 423-6565\n\nsouthjacksonfurniture@gmail\.com\s*$", "", t)
+    t = re.sub(r"\n(?:Call )?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\n\n[\w.+-]+@[\w-]+\.[\w.-]+\s*$", "", t)
     t = re.sub(r"(?<![\n#\-])\n(?=[a-z\(\.,;:\)\$\d'\"“”—–-])(?!- )", " ", t)
     t = re.sub(r"\n(?=[\.,;:\)])", "", t)
     t = re.sub(r"\n- \n", "\n", t)
