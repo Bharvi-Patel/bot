@@ -266,6 +266,49 @@ class ApiClient:
             })
         return out
 
+    def shipping_options(self) -> list[dict[str, Any]]:
+        """GET /shipping-options: public read-only list of active shipping zones and their enabled shipping methods."""
+        payload = self._request("GET", "/shipping-options")
+        zones = payload.get("zones") if isinstance(payload, dict) else None
+        if not isinstance(zones, list):
+            data = payload.get("data") if isinstance(payload, dict) else None
+            zones = data.get("zones") if isinstance(data, dict) else None
+        if not isinstance(zones, list):
+            raise ApiError("unexpected /shipping-options response shape")
+        out = []
+        for z in zones:
+            if not isinstance(z, dict):
+                continue
+            methods = []
+            for m in z.get("methods") or []:
+                if not isinstance(m, dict):
+                    continue
+                methods.append({
+                    "name": m.get("name"),
+                    "slug": m.get("slug"),
+                    "label": m.get("label") or m.get("name"),
+                    "cost_type": m.get("cost_type"),
+                    "price": to_number(m.get("price")),
+                    "percentage": to_number(m.get("percentage")),
+                    "min_cost": to_number(m.get("min_cost")),
+                    "max_cost": to_number(m.get("max_cost")),
+                    "description": strip_html(m.get("description")) or None,
+                    "is_pickup": bool(m.get("is_pickup")),
+                    "call_for_shipping": bool(m.get("call_for_shipping")),
+                })
+            country = z.get("country") if isinstance(z.get("country"), dict) else {}
+            states = [s.get("name") for s in (z.get("states") or []) if isinstance(s, dict) and s.get("name")]
+            zipcodes = [str(zc) for zc in (z.get("zipcodes") or []) if zc]
+            out.append({
+                "name": z.get("name"),
+                "country": country.get("name"),
+                "states": states,
+                "zipcodes": zipcodes,
+                "is_country_wide": bool(z.get("is_country_wide")),
+                "methods": methods,
+            })
+        return out
+
     def faqs(self) -> list[dict[str, Any]]:
         """GET /faqs/global: faqs[] -> faq_languages[] (question, answer as HTML). One row per FAQ in the store's
         first listed language. The product links inside each FAQ are dropped: the answers are store-wide text.

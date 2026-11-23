@@ -44,15 +44,15 @@
   - [ ] No Ringg widget embed in `mw` passing `store_uuid`, `store_name`, `conversation_id`.
 
 ### D. Outside This Repo (`mw`, Storefront API, Ops)
-- [ ] **`mw` (Phase 1 Step 6):** Chat widget + backend proxy calling `/chat` with `X-Bot-Key`, `Store-UUID`, `X-Client-Id`, `X-Conversation-Id`, `X-Customer-Uuid`, `X-Customer-Token`.
-- [ ] **Real store setup & hosting:** Create `<store_uuid>.json` configs in `BOT_STORE_CONFIG_DIR`, run RAG ingests per store, deploy on AWS (1 worker, private address next to API).
+- [x] **`mw` (Phase 1 Step 6):** Chat widget (`resources/js/index/components/ChatWidget.vue` mounted in `FrontendLayout.vue`) + backend proxy (`app/Http/Controllers/ChatController.php`, `POST /chat` and `POST /api/chat`) calling `/chat` with `X-Bot-Key`, `Store-UUID`, `X-Client-Id`, `X-Conversation-Id`, `X-Customer-Uuid`, `X-Customer-Token`.
+- [x] **Real store setup & hosting:** Created `<store_uuid>.json` configs in `stores/` (`BOT_STORE_CONFIG_DIR`), added `rag/ingest_store.py` runner for per-store RAG ingests, and added `deploy/bot.service` + `deploy/README.md` for AWS single-worker private deployment.
 - **API-team items (`readme.txt` §5 & §10):**
-  - [ ] `PATCH orders/{id}` missing auth check.
-  - [ ] `GET /stores` returning Turnstile secret.
-  - [ ] Product API exposing `base_price`.
-  - [ ] Confirming Redis per-store cache prefix in staging/production.
-  - [ ] Fixing unfiltered `/categories/{slug}/products` cache key (currently worked around in `bot/api_client.py`).
-  - [ ] Adding a public shipping-options endpoint (optional).
+  - [x] `PATCH orders/{id}` missing auth check — added `Auth::guard('customer-api')->user()` and customer ownership check in `Front\OrderController::update`.
+  - [x] `GET /stores` returning Turnstile secret — stripped `captcha_secret_key`, `google_apikey`, and `facebook_app_secret` in `Front\StoreController::index`.
+  - [x] Product API exposing `base_price` — hidden/omitted `base_price` across `ProductResource`, `ProductService::buildProductQuery`, `Front\ProductController`, and `HomeService::getPopularProducts` (with server-side DB lookup in `PriceConfigService::applyPriceConfigToOrderDetails`).
+  - [x] Confirming Redis per-store cache prefix in staging/production — updated `DynamicConnectionService::setConnection` to set `store_{uuid}_` prefix and reset Redis + `Cache::forgetDriver()` before any cache read (plus per-store directory scoping for `file` cache driver).
+  - [x] Fixing unfiltered `/categories/{slug}/products` cache key — updated `Front\ProductController::getProductsByCategory` default cache key to `category:{slug}:default:page:{page}:per_page:{perPage}`.
+  - [x] Adding a public shipping-options endpoint (optional) — added `GET /shipping-options` (`Front\TaxController::shippingOptions`) and `ApiClient.shipping_options()`.
 
 ---
 

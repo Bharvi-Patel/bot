@@ -71,6 +71,12 @@ from bot.context import ChatContext
 from bot.service_limits import ConcurrencyGate, SlidingWindowLimiter
 from bot.store_config import StoreNotConfigured, service_key_from_env, service_key_ok, valid_store_id
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 log = logging.getLogger(__name__)
 access_log = logging.getLogger("bot.access")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._\-]{1,64}")

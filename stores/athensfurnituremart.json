@@ -1,0 +1,10 @@
+{
+  "store_name": "Athens Furniture Mart",
+  "allowed_domains": [
+    "athensfurnituremart.com"
+  ],
+  "vertical": "furniture",
+  "enabled": true,
+  "shipping_example": "We currently ship only within the USA",
+  "catalog_rules": []
+}

@@ -502,3 +502,57 @@ def test_an_unauthenticated_answer_from_the_api_is_a_401_error():
     with pytest.raises(ApiError) as exc:
         client.customer_orders("tok.en.value")
     assert exc.value.status == 401 and "tok.en.value" not in str(exc.value)
+
+
+def test_shipping_options_parses_public_shipping_zones_and_methods():
+    payload = json.dumps({
+        "success": True,
+        "zones": [
+            {
+                "uuid": "z1",
+                "name": "Tennessee Local",
+                "country": {"name": "United States", "iso_code": "US"},
+                "states": [{"name": "Tennessee", "iso_code": "TN"}],
+                "zipcodes": ["38301"],
+                "is_country_wide": False,
+                "methods": [
+                    {
+                        "uuid": "m1",
+                        "name": "Local Delivery",
+                        "slug": "local-delivery",
+                        "label": "White Glove Local Delivery",
+                        "cost_type": "cost",
+                        "price": 199.0,
+                        "percentage": None,
+                        "min_cost": None,
+                        "max_cost": None,
+                        "description": "<p>Within 50 miles</p>",
+                        "is_pickup": False,
+                        "call_for_shipping": False,
+                    },
+                    {
+                        "uuid": "m2",
+                        "name": "In-Store Pickup",
+                        "slug": "in-store-pickup",
+                        "label": "Free In-Store Pickup",
+                        "cost_type": "cost",
+                        "price": 0.0,
+                        "percentage": None,
+                        "min_cost": None,
+                        "max_cost": None,
+                        "description": None,
+                        "is_pickup": True,
+                        "call_for_shipping": False,
+                    },
+                ],
+            }
+        ],
+    }).encode("utf-8")
+    client, t = make(payload)
+    zones = client.shipping_options()
+    assert t.requests[0].full_url == "http://127.0.0.1:8001/shipping-options"
+    assert len(zones) == 1
+    assert zones[0]["name"] == "Tennessee Local" and zones[0]["states"] == ["Tennessee"] and zones[0]["zipcodes"] == ["38301"]
+    assert zones[0]["methods"][0]["price"] == 199.0 and zones[0]["methods"][0]["description"] == "Within 50 miles"
+    assert zones[0]["methods"][1]["is_pickup"] is True and zones[0]["methods"][1]["price"] == 0.0
+
