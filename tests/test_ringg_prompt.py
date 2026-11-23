@@ -49,12 +49,12 @@ def test_bad_channel():
 
 def test_default_shared_prompt_uses_store_name_variable_without_south_jackson():
     text = ringg_prompt(channel="voice")
-    assert "@store_name" in text
+    assert "{{store_name}}" in text
     assert "South Jackson" not in text
     assert "Rugs and Decor" not in text
     assert "only within the USA" not in text
     furn = ringg_prompt(channel="voice", vertical="furniture")
-    assert "@store_name" in furn and "beds, desks, rugs" in furn and "Rugs and Decor" not in furn
+    assert "{{store_name}}" in furn and "beds, desks, rugs" in furn and "Rugs and Decor" not in furn
 
 
 
@@ -86,3 +86,17 @@ def test_voice_refuses_to_build_if_a_link_rule_changed_in_the_shared_prompt(monk
     with pytest.raises(RuntimeError):
         rp.ringg_prompt(SOUTH_JACKSON, "voice")
     assert "Chat style" in rp.ringg_prompt(SOUTH_JACKSON, "text")      # the text channel does not depend on the voice rewording
+
+
+@pytest.mark.parametrize("vertical", ["furniture", "electronics", "veterinary", "tires_wheels", "general"])
+def test_shared_voice_prompt_uses_ringgs_variable_syntax_once(vertical):
+    text = ringg_prompt(channel="voice", vertical=vertical)
+    assert text.count("{{store_name}}") == 1          # Ringg fills {{name}}; the old @store_name would be read out loud
+    assert "@store_name" not in text
+
+
+@pytest.mark.parametrize("vertical", ["furniture", "electronics", "veterinary", "tires_wheels", "general"])
+def test_voice_reads_at_most_three_results_while_chat_keeps_its_longer_list(vertical):
+    voice = ringg_prompt(channel="voice", vertical=vertical)
+    assert "up to 5" not in voice and "up to 3 of the results" in voice      # agrees with "read at most three products"
+    assert "up to 5 of the results" in ringg_prompt(channel="text", vertical=vertical)

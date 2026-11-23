@@ -44,6 +44,8 @@ _VOICE_LINK_EDITS = (
     (", and link it only with a URL a tool returned.", "."),
     ("and give image links from the result as plain URLs.", "and describe the item from the result. If they want a picture, say it is on the website."),
     ("\n- Keep answers short and link the product or policy page.", ""),
+    # the speaking rules say to read at most three products, so the shared "list up to 5" would clash on a phone call
+    ("list up to 5 of the results", "read out up to 3 of the results"),
 )
 
 
@@ -58,9 +60,14 @@ def _voice_without_links(text: str) -> str:
 TEXT_RULES = """Chat style: keep answers short, plain text, and link a product or page only with a URL a tool returned."""
 
 
+# Ringg writes an agent variable in prompt text as {{name}}. The shared prompt carries the store's name through the agent's
+# store_name variable, which the storefront (or the outbound call) fills in for each call.
+STORE_NAME_TOKEN = "{{store_name}}"
+
+
 def _shared_config(vertical: str = "general"):
     from bot.store_config import StoreConfig
-    return StoreConfig(store_uuid="shared", store_name="@store_name", vertical=vertical)
+    return StoreConfig(store_uuid="shared", store_name=STORE_NAME_TOKEN, vertical=vertical)
 
 
 def ringg_prompt(cfg=None, channel: str = "text", vertical: str = "general") -> str:
@@ -90,11 +97,11 @@ def ringg_prompt(cfg=None, channel: str = "text", vertical: str = "general") -> 
 def main(argv: list[str] | None = None) -> None:
     from bot.store_config import valid_store_id
     from bot.verticals import VERTICALS
-    ap = argparse.ArgumentParser(description="Print the Ringg agent prompt (shared @store_name by default, or for a specific store_uuid).")
-    ap.add_argument("store_uuid", nargs="?", default=None, help="Optional store_uuid; omit to use @store_name for a shared multi-store agent.")
+    ap = argparse.ArgumentParser(description="Print the Ringg agent prompt (shared {{store_name}} by default, or for a specific store_uuid).")
+    ap.add_argument("store_uuid", nargs="?", default=None, help="Optional store_uuid; omit to use {{store_name}} for a shared multi-store agent.")
     ap.add_argument("--channel", choices=("text", "voice"), default="text")
     ap.add_argument("--vertical", choices=sorted(VERTICALS), default="general",
-                    help="Vertical rules for the shared @store_name prompt (ignored when store_uuid is given).")
+                    help="Vertical rules for the shared {{store_name}} prompt (ignored when store_uuid is given).")
     args = ap.parse_args(argv)
     cfg = None
     if args.store_uuid is not None:
