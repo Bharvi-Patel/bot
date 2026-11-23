@@ -8,10 +8,12 @@ get_store_info, no medical claims, shipping and pickup wording, ...). This modul
 * Orders. The Ringg agent has no order tool: a browser or phone caller cannot prove who they are (the widget's variables are
   visible in the page source, so a "logged in" value from the page could be faked). The order rules are replaced by one line
   that sends the customer to their account or the store.
-* Voice wording, for --channel voice: short spoken sentences, no reading out links, say prices as a person would.
+* Voice wording, for --channel voice: short spoken sentences, no reading out links, say prices as a person would. The shared
+  rules that tell the assistant to give links or image URLs are reworded or dropped for voice, so they do not clash with
+  "never read out web addresses". The text channel keeps them.
 
-If bot/prompt.py changes so that an order rule no longer matches what is removed here, this raises instead of producing a prompt
-that talks about a tool the agent does not have.
+If bot/prompt.py changes so that an order rule or a link rule no longer matches what is changed here, this raises instead of
+producing a prompt that talks about a tool the agent does not have, or tells a voice agent to read out links.
 """
 from __future__ import annotations
 
@@ -35,6 +37,23 @@ VOICE_RULES = """Speaking rules (this is a phone or browser voice call):
 - Never read out web addresses or long SKUs. Say the product name; if the customer needs a link or a SKU, say it is on the website.
 - If you did not catch something, ask the customer to repeat it. Never guess a product name, a number or a spelling.
 - Do not use lists, bullet points, markdown or emoji."""
+
+# Shared rules that hand out links. They suit a chat window, not a phone call, so for voice each is reworded or dropped.
+# (old text, voice text); every old text must be found exactly once, otherwise bot/prompt.py changed and this must be updated.
+_VOICE_LINK_EDITS = (
+    (", and link it only with a URL a tool returned.", "."),
+    ("and give image links from the result as plain URLs.", "and describe the item from the result. If they want a picture, say it is on the website."),
+    ("\n- Keep answers short and link the product or policy page.", ""),
+)
+
+
+def _voice_without_links(text: str) -> str:
+    for old, new in _VOICE_LINK_EDITS:
+        if text.count(old) != 1:
+            raise RuntimeError("bot/prompt.py changed: a link rule is no longer what bot/ringg_prompt.py rewords for voice. Update it.")
+        text = text.replace(old, new)
+    return text
+
 
 TEXT_RULES = """Chat style: keep answers short, plain text, and link a product or page only with a URL a tool returned."""
 
@@ -61,6 +80,8 @@ def ringg_prompt(cfg=None, channel: str = "text", vertical: str = "general") -> 
         line = line.replace("unless get_order_status returned them in this turn, and never invent them", "and never invent them")
         out.append(line)
     text = "\n".join(out)
+    if channel == "voice":
+        text = _voice_without_links(text)
     if not replaced or "get_order_status" in text:
         raise RuntimeError("bot/prompt.py changed: the order rules are no longer what bot/ringg_prompt.py removes. Update it.")
     return text.rstrip() + "\n\n" + (VOICE_RULES if channel == "voice" else TEXT_RULES) + "\n"

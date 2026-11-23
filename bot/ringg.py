@@ -14,7 +14,11 @@ Which store a call belongs to is decided by RINGG_AGENT_STORES, a JSON object th
 may serve: {"<agent id>": "<store uuid>"} for an agent with one store, or {"<agent id>": ["<store uuid>", ...]} for an agent
 shared by several. A store id sent with a call (a Ringg variable set by the storefront, or custom_args_values in an event) is
 only a CHOICE among the stores that agent is allowed to serve: an id outside the list is refused, never trusted. An agent that
-is not in the map gets nothing, and a shared agent must say which of its stores the call is for. An event from an agent or for
+is not in the map gets nothing, and a shared agent must say which of its stores the call is for.
+{"<agent id>": "*"} means "any store that has an enabled settings file" (bot/store_config.py): the settings folder is then the
+only list of stores, so a new store needs no change here or in Ringg. Such an agent must ALWAYS name its store (no default),
+and the bot refuses a store that has no enabled settings file, for tools and for call events alike. "*" without
+BOT_STORE_CONFIG_DIR refuses everything (fail closed), and it is never accepted inside a list. An event from an agent or for
 a store that is not allowed is acknowledged and dropped (a 4xx would make Ringg retry nothing useful, and the event is not ours
 to record). A store id in a tool's JSON body is never used: the body is written by Ringg's model, not by the storefront.
 
@@ -36,9 +40,10 @@ import re
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from bot.events import SCHEMA_VERSION, _CODE, _ID, _count
+from bot.store_config import valid_store_id
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +54,7 @@ _STATUSES = ("registered", "ongoing", "retry", "completed", "failed", "error", "
 _SUB = re.compile(r"[a-z_ ]{1,40}")
 _CLASS = re.compile(r"[a-z0-9_]{1,40}")
 MAX_SEEN = 20_000
+WILDCARD = "*"        # an RINGG_AGENT_STORES value: this agent may serve any store that has an enabled settings file
 
 
 def secret_from_env() -> str:
@@ -57,7 +63,8 @@ def secret_from_env() -> str:
 
 def agent_stores_from_env() -> dict[str, str | list[str]]:
     """RINGG_AGENT_STORES: {"<ringg agent id>": "<store uuid>"} or {"<ringg agent id>": ["<store uuid>", ...]} for an agent
-    shared by several stores. Entries with an unusable id are refused at start-up."""
+    shared by several stores, or {"<ringg agent id>": "*"} for an agent that may serve any store with an enabled settings
+    file. Entries with an unusable id are refused at start-up ("*" is accepted only as the whole value, never in a list)."""
     raw = os.getenv("RINGG_AGENT_STORES", "").strip()
     if not raw:
         return {}
@@ -68,6 +75,8 @@ def agent_stores_from_env() -> dict[str, str | list[str]]:
     if not isinstance(data, dict):
         raise ValueError("RINGG_AGENT_STORES must be a JSON object of agent id -> store id (or a list of store ids)")
     for agent, stores in data.items():
+        if stores == WILDCARD and isinstance(agent, str) and _ID.fullmatch(agent):
+            continue
         ids = stores if isinstance(stores, list) else [stores]
         if (not isinstance(agent, str) or not _ID.fullmatch(agent) or not ids
                 or not all(isinstance(s, str) and _ID.fullmatch(s) for s in ids)):
@@ -212,12 +221,18 @@ def clean_tool_args(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _allowed_stores(value: Any) -> tuple[str, ...]:
-    """The stores one agent may serve, from its RINGG_AGENT_STORES entry (one id, or a list of ids)."""
+    """The stores one agent may serve, from its RINGG_AGENT_STORES entry (one id, or a list of ids). A wildcard entry has
+    no fixed list (see is_wildcard), and a "*" inside a list is never an id."""
     if isinstance(value, str):
-        return (value,) if value else ()
+        return (value,) if value and value != WILDCARD else ()
     if isinstance(value, (list, tuple)):
-        return tuple(v for v in value if isinstance(v, str) and v)
+        return tuple(v for v in value if isinstance(v, str) and v and v != WILDCARD)
     return ()
+
+
+def is_wildcard(agent_stores: dict[str, Any], agent_id: str | None) -> bool:
+    """True when this agent is listed as {"<agent id>": "*"}: it may serve any store that has an enabled settings file."""
+    return isinstance(agent_id, str) and agent_stores.get(agent_id) == WILDCARD
 
 
 def resolve_store(agent_id: str | None, agent_stores: dict[str, Any], explicit_store: Any = None) -> str | None:
@@ -225,12 +240,17 @@ def resolve_store(agent_id: str | None, agent_stores: dict[str, Any], explicit_s
     1. The agent must be in RINGG_AGENT_STORES. An agent that is not listed (or an empty map) gets None.
     2. A store id sent with the call is accepted only if it is one of that agent's allowed stores; any other id gives None.
     3. With no usable store id sent (blank, "null", ...), the agent's single store is used. An agent with several allowed
-       stores must say which one: with none given it gets None, never a guess."""
+       stores must say which one: with none given it gets None, never a guess.
+    A "*" agent has no list: it must send a well-formed store id every time (no default), and whether that store really
+    has an enabled settings file is checked by the caller (this function only reads the map)."""
+    candidate = _id(explicit_store.strip() if isinstance(explicit_store, str) else explicit_store)
+    usable = bool(candidate) and candidate.lower() not in _BLANK_WORDS
+    if is_wildcard(agent_stores, agent_id):
+        return candidate if usable and valid_store_id(candidate) else None
     allowed = _allowed_stores(agent_stores.get(agent_id)) if isinstance(agent_id, str) else ()
     if not allowed:
         return None
-    candidate = _id(explicit_store.strip() if isinstance(explicit_store, str) else explicit_store)
-    if candidate and candidate.lower() not in _BLANK_WORDS:
+    if usable:
         return candidate if candidate in allowed else None
     return allowed[0] if len(allowed) == 1 else None
 
@@ -295,9 +315,13 @@ def build_call_event(payload: dict, store: str, now: datetime | None = None) -> 
     }
 
 
-def handle(payload: Any, agent_stores: dict[str, Any], seen: Seen, now: datetime | None = None) -> tuple[str, dict | None]:
+def handle(payload: Any, agent_stores: dict[str, Any], seen: Seen, now: datetime | None = None,
+           store_served: Callable[[str, bool], bool] | None = None) -> tuple[str, dict | None]:
     """(what happened, the event to write or None). What happened is one of:
-    bad_payload, ignored_type, unknown_agent, duplicate, recorded. The caller answers 400 for bad_payload, 2xx for the rest."""
+    bad_payload, ignored_type, unknown_agent, store_not_configured, duplicate, recorded. The caller answers 400 for
+    bad_payload, 2xx for the rest.
+    store_served(store, wildcard) says whether the store has an enabled settings file (the same check the tools route
+    makes); an event for a store that fails it is dropped and not remembered as seen. None skips the check."""
     if not isinstance(payload, dict) or not _id(payload.get("call_id")) or not isinstance(payload.get("event_type"), str):
         return "bad_payload", None
     if payload["event_type"] not in RECORDED:
@@ -310,6 +334,8 @@ def handle(payload: Any, agent_stores: dict[str, Any], seen: Seen, now: datetime
     store = resolve_store(agent_id, agent_stores, explicit_store)
     if not store:
         return "unknown_agent", None
+    if store_served is not None and not store_served(store, is_wildcard(agent_stores, agent_id)):
+        return "store_not_configured", None
     if not seen.first_time(f"{payload['call_id']}:{payload['event_type']}"):
         return "duplicate", None
     return "recorded", build_call_event(payload, store, now)

@@ -450,3 +450,168 @@ def test_http_tool_respects_per_agent_keys_and_disabled_store_config(monkeypatch
     finally:
         stores.reset()
 
+
+
+# ---- patch 10: an agent mapped to "*" serves any store that has an enabled settings file ----------------------------------
+
+WILD = {AGENT: ringg.WILDCARD}
+
+
+def test_wildcard_agent_setting_is_accepted_only_as_the_whole_value(monkeypatch):
+    monkeypatch.setenv("RINGG_AGENT_STORES", json.dumps({AGENT: "*", "agent-b": [STORE], "agent-c": "store-c"}))
+    assert ringg.agent_stores_from_env() == {AGENT: "*", "agent-b": [STORE], "agent-c": "store-c"}
+    for bad in ({AGENT: ["*"]}, {AGENT: [STORE, "*"]}, {AGENT: "**"}, {AGENT: "*a"}, {"bad id": "*"}, {AGENT: ""}, {AGENT: []}):
+        monkeypatch.setenv("RINGG_AGENT_STORES", json.dumps(bad))
+        with pytest.raises(ValueError):
+            ringg.agent_stores_from_env()
+
+
+def test_a_wildcard_agent_must_name_a_well_formed_store_and_has_no_default():
+    assert ringg.is_wildcard(WILD, AGENT) and not ringg.is_wildcard({AGENT: STORE}, AGENT) and not ringg.is_wildcard(WILD, None)
+    assert ringg.resolve_store(AGENT, WILD, "any-store-7") == "any-store-7"
+    assert ringg.resolve_store(AGENT, WILD, "  any-store-7 ") == "any-store-7"
+    for none_named in (None, "", "null", "any", "*", "  ", 5):
+        assert ringg.resolve_store(AGENT, WILD, none_named) is None                     # no guess, and "*" is not a store
+    for malformed in ("../etc/passwd", "a b", "x.y", "a/b", "s" * 65, "store;drop"):
+        assert ringg.resolve_store(AGENT, WILD, malformed) is None
+    assert ringg.resolve_store("unlisted", WILD, "any-store-7") is None                  # only the listed agent is a wildcard
+    assert ringg.resolve_store(None, WILD, "any-store-7") is None
+
+
+def test_a_star_inside_a_list_is_never_a_wildcard():
+    assert ringg.resolve_store(AGENT, {AGENT: ["*"]}, "store-x") is None
+    assert ringg.resolve_store(AGENT, {AGENT: [STORE, "*"]}, "store-x") is None
+    assert ringg.resolve_store(AGENT, {AGENT: [STORE, "*"]}, STORE) == STORE
+
+
+def test_the_other_agents_stay_limited_next_to_a_wildcard_agent():
+    mixed = {AGENT: "*", "agent-b": [STORE]}
+    assert ringg.resolve_store("agent-b", mixed, "store-x") is None
+    assert ringg.resolve_store("agent-b", mixed, None) == STORE
+    assert ringg.resolve_store(AGENT, mixed, "store-x") == "store-x"
+
+
+def test_handle_drops_an_event_when_the_settings_check_says_no_and_does_not_mark_it_seen():
+    seen = ringg.Seen()
+    event = {**COMPLETED, "custom_args_values": {"store_uuid": "store-x", "conversation_id": "c1"}}
+    assert ringg.handle(event, WILD, seen, store_served=lambda store, wildcard: False) == ("store_not_configured", None)
+    what, ev = ringg.handle(event, WILD, seen, store_served=lambda store, wildcard: store == "store-x" and wildcard)
+    assert what == "recorded" and ev["store"] == "store-x"                              # the refusal did not use up the (call, event) pair
+    assert ringg.handle(event, WILD, ringg.Seen()) [0] == "recorded"                    # no check given: as before
+
+
+def _settings_dir(tmp_path, monkeypatch, **extra):
+    from bot import stores
+    files = {STORE: {"store_name": "Store A", "enabled": True}, "store-b": {"store_name": "Store B", "enabled": True},
+             "store-off": {"store_name": "Off", "enabled": False}, **extra}
+    for name, data in files.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps(data))
+    monkeypatch.setenv("BOT_STORE_CONFIG_DIR", str(tmp_path))
+    stores.reset()
+    return stores
+
+
+def test_http_wildcard_tool_serves_configured_stores_only(monkeypatch, tmp_path):
+    stores = _settings_dir(tmp_path, monkeypatch)
+    try:
+        calls = []
+        c, sink = _tools_client(calls, stores=WILD)
+        ok = c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "store-b"})
+        assert ok.status_code == 200 and calls[-1][2].store_uuid == "store-b" and sink.rows[-1]["store"] == "store-b"
+        assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "X-Store-Uuid": STORE}).status_code == 200
+        n = len(calls)
+        for header in ({"Store-UUID": "store-off"}, {"Store-UUID": "no-such-store"}, {"Store-UUID": "../x"}, {"Store-UUID": "*"},
+                       {"Store-UUID": "null"}, {}):
+            assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, **header}).status_code == 403, header
+        assert c.post("/ringg/tools/list_brands", json={"store_uuid": "store-b"}, headers=TH).status_code == 403   # the body never names the store
+        assert len(calls) == n                                                                                    # no tool ran for any refusal
+    finally:
+        stores.reset()
+
+
+def test_a_new_store_needs_only_its_settings_file(monkeypatch, tmp_path):
+    stores = _settings_dir(tmp_path, monkeypatch)
+    try:
+        calls = []
+        c, _ = _tools_client(calls, stores=WILD)
+        assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "brand-new"}).status_code == 403
+        stores.reset()                                                                                           # skip the 60 s settings cache
+        (tmp_path / "brand-new.json").write_text(json.dumps({"store_name": "Brand New", "enabled": True}))
+        assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": "brand-new"}).status_code == 200
+        assert calls[-1][2].store_uuid == "brand-new"
+    finally:
+        stores.reset()
+
+
+def test_http_wildcard_without_a_settings_folder_refuses_everything(monkeypatch):
+    from bot import stores
+    monkeypatch.delenv("BOT_STORE_CONFIG_DIR", raising=False)
+    stores.reset()
+    calls = []
+    c, _ = _tools_client(calls, stores=WILD)
+    for store in (STORE, "store-b", "anything"):
+        assert c.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": store}).status_code == 403
+    assert calls == []
+    c2, _ = _tools_client(calls, stores={AGENT: [STORE]})                                                        # a listed agent still works in development
+    assert c2.post("/ringg/tools/list_brands", json={}, headers={**TH, "Store-UUID": STORE}).status_code == 200
+
+
+def test_http_wildcard_agent_still_needs_its_own_key_and_the_listed_agent_cannot_roam(monkeypatch, tmp_path):
+    stores = _settings_dir(tmp_path, monkeypatch)
+    try:
+        calls = []
+        mixed = {"agent-wild": "*", "agent-fixed": [STORE]}
+        keys = {"agent-wild": "key-w", "agent-fixed": "key-f"}
+        c, _ = _tools_client(calls, stores=mixed, key=keys)
+
+        def post(agent, key, store):
+            return c.post("/ringg/tools/list_brands", json={}, headers={"X-Ringg-Tools-Key": key, "X-Ringg-Agent-Id": agent, "Store-UUID": store})
+
+        assert post("agent-wild", "key-w", "store-b").status_code == 200
+        assert post("agent-wild", "key-f", "store-b").status_code == 401                 # the other agent's key does not open it
+        assert post("agent-fixed", "key-f", "store-b").status_code == 403                # configured, but not this agent's store
+        assert post("agent-fixed", "key-f", STORE).status_code == 200
+    finally:
+        stores.reset()
+
+
+def test_http_webhook_records_events_only_for_configured_stores(monkeypatch, tmp_path):
+    stores = _settings_dir(tmp_path, monkeypatch)
+    try:
+        c, sink = _client(stores=WILD)
+        h = {"X-Webhook-Secret": "whsec"}
+
+        def event(store, call):
+            custom = {"conversation_id": "c1", **({"store_uuid": store} if store else {})}
+            return {**COMPLETED, "call_id": call, "custom_args_values": custom}
+
+        for store, call in (("store-b", "call-ok"), ("store-off", "call-1"), ("no-such-store", "call-2"), (None, "call-3"), ("../x", "call-4")):
+            assert c.post("/webhooks/ringg", json=event(store, call), headers=h).status_code == 200     # always acknowledged
+        assert [(r["store"], r["call_id"]) for r in sink.rows] == [("store-b", "call-ok")]
+    finally:
+        stores.reset()
+
+
+def test_http_webhook_also_drops_events_of_a_switched_off_store_for_a_listed_agent(monkeypatch, tmp_path):
+    stores = _settings_dir(tmp_path, monkeypatch)
+    try:
+        c, sink = _client(stores={AGENT: [STORE, "store-off"]})
+        h = {"X-Webhook-Secret": "whsec"}
+        off = {**COMPLETED, "call_id": "call-off", "custom_args_values": {"store_uuid": "store-off"}}
+        assert c.post("/webhooks/ringg", json=off, headers=h).status_code == 200
+        assert sink.rows == []
+        on = {**COMPLETED, "call_id": "call-on", "custom_args_values": {"store_uuid": STORE}}
+        assert c.post("/webhooks/ringg", json=on, headers=h).status_code == 200
+        assert [r["store"] for r in sink.rows] == [STORE]
+    finally:
+        stores.reset()
+
+
+def test_http_webhook_wildcard_without_a_settings_folder_records_nothing(monkeypatch):
+    from bot import stores
+    monkeypatch.delenv("BOT_STORE_CONFIG_DIR", raising=False)
+    stores.reset()
+    c, sink = _client(stores=WILD)
+    ev = {**COMPLETED, "custom_args_values": {"store_uuid": STORE}}
+    assert c.post("/webhooks/ringg", json=ev, headers={"X-Webhook-Secret": "whsec"}).status_code == 200
+    assert sink.rows == []

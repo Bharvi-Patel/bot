@@ -33,7 +33,7 @@ digits . _ - up to 64) so turns of one conversation can be grouped; without it t
 POST /webhooks/ringg  (Ringg.AI call events; see bot/ringg.py)
   Ringg posts here directly, so it does not use X-Bot-Key: it sends X-Webhook-Secret (RINGG_WEBHOOK_SECRET), which you also put in
   the agent's Event Subscription headers. The store is looked up from the event's agent id in RINGG_AGENT_STORES, never read
-  from the payload. Bodies up to 1 MB are accepted here (transcripts); /chat keeps its small limit. Each accepted call event
+  from the payload (a store the agent is not allowed, or one with no enabled settings file, is dropped). Bodies up to 1 MB are accepted here (transcripts); /chat keeps its small limit. Each accepted call event
   becomes one "call_event" line in the same funnel log as chat turns: ids, status, duration, cost and callback flag only; no
   phone numbers, transcript, summary or recording link. No secret configured: 503; wrong secret: 401; not an event: 400.
 
@@ -41,7 +41,9 @@ POST /ringg/tools/<tool>  (the Ringg.AI voice agent's API tools; see bot/ringg.p
   Tools: search_products, get_product_details, recommend_products, search_policies, list_categories, list_brands,
   list_attribute_values, get_shipping_options, get_store_info, check_inventory. Never get_order_status: a caller is a visitor.
   Headers set in the agent's API tool: X-Ringg-Tools-Key (RINGG_TOOLS_KEY), X-Ringg-Agent-Id (store from RINGG_AGENT_STORES),
-  X-Ringg-Call-Id (optional). Body: the tool's arguments. Reply: the tool's result. Each call writes a "call_tool" event line.
+  Store-UUID (the store; required for a shared agent), X-Ringg-Call-Id (optional). RINGG_AGENT_STORES may map an agent to
+  "*": it then serves any store that has an enabled settings file (BOT_STORE_CONFIG_DIR is required) and must always send
+  Store-UUID. Body: the tool's arguments. Reply: the tool's result. Each call writes a "call_tool" event line.
   The chat reply checks (guardrails.check_reply, price repair) do not apply: Ringg's own model writes what is spoken.
 
 Who is asking and which store are never read from the body or from anything the model can write: the body is
@@ -244,6 +246,20 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
     agent_stores = ringg_agent_stores if ringg_agent_stores is not None else ringg.agent_stores_from_env()
     seen_calls = ringg.Seen()
     tools_key = ringg_tools_key if ringg_tools_key is not None else ringg.tools_key_from_env()
+    if any(v == ringg.WILDCARD for v in agent_stores.values()) and not stores.is_multi_store():
+        log.warning("RINGG_AGENT_STORES has a \"*\" agent but BOT_STORE_CONFIG_DIR is not set: that agent is refused until it is set")
+
+    def store_served(store: str, wildcard: bool) -> bool:
+        """Whether a Ringg call or event may be answered for this store. With a settings folder: only a store with an
+        enabled settings file. Without one (local development): any store the agent's list allows, but never a \"*\" agent,
+        because then nothing would limit which store it names."""
+        if not stores.is_multi_store():
+            return not wildcard
+        try:
+            stores.config_for(ChatContext(store_uuid=store))
+        except StoreNotConfigured:
+            return False
+        return True
 
     def llm():
         with llm_lock:                                   # two first chats at once must not build two model clients
@@ -341,7 +357,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
             payload = json.loads(await request.body())
         except ValueError:
             raise HTTPException(400, "body is not JSON") from None
-        what, event = ringg.handle(payload, agent_stores, seen_calls)
+        what, event = ringg.handle(payload, agent_stores, seen_calls, store_served=store_served)
         if what == "bad_payload":
             raise HTTPException(400, "not a call event")
         if event is not None:
@@ -363,7 +379,7 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         Headers (all set in the agent's API tool in Ringg, none by the caller's voice):
           X-Ringg-Tools-Key  static value, must equal RINGG_TOOLS_KEY (401 otherwise, 503 if unset).
           X-Ringg-Agent-Id   which agent is calling; checked against RINGG_AGENT_STORES (403 if unknown).
-          Store-UUID / X-Store-Uuid  optional Variable row from store_uuid for a shared multi-store agent; must be one of the stores RINGG_AGENT_STORES allows for this agent (403 otherwise). Without it, an agent with one store uses that store.
+          Store-UUID / X-Store-Uuid  optional Variable row from store_uuid for a shared multi-store agent; must be one of the stores RINGG_AGENT_STORES allows for this agent (403 otherwise). Without it, an agent with one store uses that store. An agent mapped to "*" must always send it, and the store must have an enabled settings file (403 "store is not configured" otherwise).
           X-Ringg-Call-Id    optional, the call id (a Variable row from call_data.id): rate limit and funnel link.
         Body: the tool's arguments as JSON ({} or empty for list_* tools). The reply is the tool's result."""
         if not tools_key:
@@ -387,11 +403,8 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
         if not store:
             raise HTTPException(403, "unknown agent")
         ctx = ChatContext(store_uuid=store, client_id=f"ringg:{call_id or x_ringg_agent_id}"[:128])     # a visitor: no customer id or token
-        if stores.is_multi_store():
-            try:
-                stores.config_for(ctx)
-            except StoreNotConfigured:
-                raise HTTPException(403, "store is not configured") from None
+        if not store_served(store, ringg.is_wildcard(agent_stores, x_ringg_agent_id)):
+            raise HTTPException(403, "store is not configured")
         args = ringg.clean_tool_args(args)
         for limiter, rate_key in ((client_limiter, f"{store}|ringg:{call_id or x_ringg_agent_id}"), (store_limiter, store)):
             allowed, wait = limiter.allow(rate_key)
