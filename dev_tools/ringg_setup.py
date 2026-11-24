@@ -336,7 +336,7 @@ def cmd_create(client: Client, spec: dict[str, Any], env: dict[str, str], stores
     if not allow_duplicate and any(a.get("agent_display_name") == spec["agent_name"] for a in agents):
         raise SetupError(f"an agent named {spec['agent_name']!r} already exists; nothing was created. "
                          f"Use `show <agent id>` to look at it, or rename it in the spec.")
-    status, data = client.request("POST", "/public/agent", built["create"])
+    status, data = client.request("POST", "/public/agent/", built["create"])
     agent_id = (data.get("data") or {}).get("id") if isinstance(data, dict) else None
     if status != 200 or not agent_id:
         raise _fail("creating the agent", status, data)
@@ -365,9 +365,13 @@ def summarize_agent(data: dict[str, Any]) -> list[str]:
     lines = [f"type: {agent.get('agent_type')}   language: {ver.get('language')}   voice: {(ver.get('voice') or {}).get('name')}",
              f"custom variables: {', '.join(cfg.get('custom_variables') or []) or '(none)'}",
              f"first message: {str(cfg.get('intro_message'))[:120]}"]
-    for sec in ((cfg.get("agent_prompt") or {}).get("prompt_sections") or []):
-        text = str(sec.get("section_content", ""))
-        lines.append(f"prompt section {sec.get('section_title')!r}: {len(text)} characters, {{{{store_name}}}} x{text.count('{{store_name}}')}")
+    prompt = cfg.get("agent_prompt")
+    if isinstance(prompt, str):  # Ringg may return the prompt as one plain string
+        lines.append(f"prompt: {len(prompt)} characters, {{{{store_name}}}} x{prompt.count('{{store_name}}')}")
+    else:
+        for sec in ((prompt or {}).get("prompt_sections") or []):
+            text = str(sec.get("section_content", ""))
+            lines.append(f"prompt section {sec.get('section_title')!r}: {len(text)} characters, {{{{store_name}}}} x{text.count('{{store_name}}')}")
     lines.append(f"website domains: {', '.join(ver.get('whitelisted_domains') or []) or '(none)'}")
     for sub in ver.get("event_subscriptions") or []:
         lines.append(f"webhook: {','.join(sub.get('event_type') or [])} -> {sub.get('callback_url')} "

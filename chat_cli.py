@@ -3,6 +3,7 @@
   python chat_cli.py          type a question, press Enter; empty line or Ctrl+C to quit
   python chat_cli.py --debug  also print which tools ran and why a reply was blocked
   python chat_cli.py --customer <customer uuid>   pretend this customer is logged in (tests order lookup without an email)
+  python chat_cli.py --store <store uuid>         chat as this store (needed when BOT_STORE_CONFIG_DIR is set in .env)
 Guests are identified as "cli" for the order-lookup rate limit. In your web endpoint use the real client IP or session id.
 """
 import sys
@@ -15,7 +16,8 @@ from bot.router import answer
 def main() -> None:
     debug = "--debug" in sys.argv
     customer = sys.argv[sys.argv.index("--customer") + 1] if "--customer" in sys.argv else None
-    ctx = ChatContext(client_id="cli", customer_uuid=customer)
+    store = sys.argv[sys.argv.index("--store") + 1] if "--store" in sys.argv else None
+    ctx = ChatContext(store_uuid=store, client_id="cli", customer_uuid=customer)
     llm, history = get_llm(), []
     print(f"South Jackson assistant (model: {llm.model}). Empty line to quit.")
     while True:

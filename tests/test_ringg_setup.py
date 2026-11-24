@@ -138,7 +138,7 @@ def test_create_with_yes_makes_one_agent_then_sets_the_rest_and_never_prints_the
     fake = Fake()
     code, out = run(["create", write_spec(tmp_path), "--yes"], send=fake)
     assert code == 0
-    assert [(m, p) for m, p, _, _ in fake.calls] == [("GET", "/agent/all"), ("POST", "/public/agent"), ("PATCH", "/agent/v1"),
+    assert [(m, p) for m, p, _, _ in fake.calls] == [("GET", "/agent/all"), ("POST", "/public/agent/"), ("PATCH", "/agent/v1"),
                                                       ("PATCH", "/agent/v1"), ("PATCH", "/agent/v1")]
     assert all(h["X-API-KEY"] == KEY for _, _, h, _ in fake.calls)
     assert [b["operation"] for m, _, _, b in fake.calls if m == "PATCH"] == ["edit_prompt", "edit_agent_whitelisted_domains",
@@ -220,6 +220,13 @@ def test_show_prints_names_and_sizes_but_no_secret_values_or_tool_settings():
     text = "\n".join(rs.summarize_agent(data))
     assert "SECRETVALUE" not in text and "hidden.example.test" not in text
     assert "X-Webhook-Secret" in text and "get_store_info" in text and "{{store_name}} x1" in text
+
+
+def test_show_accepts_the_prompt_as_a_plain_string():
+    data = {"agents": {"agent_type": "inbound", "active_agent_version_id": "v1", "version_details": {"v1": {
+        "language": "en-US", "agent_config": {"agent_prompt": "You are for {{store_name}}.", "intro_message": "Hi"}}}}}
+    text = "\n".join(rs.summarize_agent(data))
+    assert "prompt: 27 characters, {{store_name}} x1" in text
 
 
 # ---------- the tool checklist ----------
