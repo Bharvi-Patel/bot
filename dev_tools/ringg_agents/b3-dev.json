@@ -1,0 +1,19 @@
+{
+  "agent_name": "B3 DEV",
+  "vertical": "furniture",
+  "agent_type": "inbound",
+  "primary_language": "en-US",
+  "voice_id": "63abee77-6986-42b0-a1b5-2c94590b3563",
+  "intro_message": "Hi! Welcome to {{store_name}}. How can I help you today?",
+  "custom_variables": ["store_uuid", "store_name", "conversation_id"],
+  "call_config": {"max_call_length": 240},
+  "whitelisted_domains": ["https://www.ringg.ai"],
+  "event_subscriptions": [
+    {
+      "event_type": ["call_started", "call_completed", "all_processing_completed", "platform_analysis_completed"],
+      "callback_url": "${BOT_PUBLIC_URL}/webhooks/ringg",
+      "method_type": "POST",
+      "headers": {"X-Webhook-Secret": "${RINGG_WEBHOOK_SECRET}"}
+    }
+  ]
+}

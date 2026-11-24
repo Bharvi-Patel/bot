@@ -48,11 +48,42 @@ _VOICE_LINK_EDITS = (
     ("list up to 5 of the results", "read out up to 3 of the results"),
 )
 
+# The caller is already on a call with the store's assistant, so a voice agent does not volunteer a phone number or email address
+# (reading one aloud is awkward, and the number a caller reached may be this very agent). Where the shared rules say to give the
+# store's contact details, voice sends the caller to the store's website instead. If the caller asks for the phone number or email,
+# the agent gives it, copied from get_store_info. Same rule as above: each old text is found exactly once.
+_VOICE_CONTACT_EDITS = (
+    ("say so and give the store's phone or email (get_store_info).", "say so and suggest checking the store's website."),
+    ("and add contact details only if they do not fully answer it; do not reply with just a phone or email when the chunks answer the question.",
+     "and, only if they do not fully answer it, say what you do not have; do not say you don't have the information when the chunks answer the question."),
+    ("then give the store's phone or email. Never reply with contact details alone, and never word it",
+     "then suggest checking the store's website. Never word it"),
+    (" To give contact details, call get_store_info first and copy the phone or email from its result; never write an email address or phone number from memory.", ""),
+    ("say you don't have that information and give the store's phone or email.", "say you don't have that information and suggest checking the store's website."),
+    ("or to contact the store, and give the store's phone or email from get_store_info.", "or to contact the store through its website."),
+    ("and give the store's phone or email so they can ask the store.", "and suggest they ask the store through its website."),
+    ("\n- Give contact details as plain lines and do not add notes about where they came from.", ""),
+    ("\n- Phone numbers and email addresses: copy them only from a get_store_info result. To give contact details, call get_store_info first. Never write one from memory.",
+     "\n- Do not offer or volunteer the store's phone number or email address. Give one only when the caller asks for it: call "
+     "get_store_info first and copy it from its result, never from memory. Read a phone number slowly in short groups of digits, and "
+     "spell an email address out, saying at and dot. If get_store_info has none, say you don't have it and suggest checking the store's website."),
+    ("say you don't have exact shipping prices and give the store's phone or email.", "say you don't have exact shipping prices and suggest checking the store's website."),
+    ("say you don't have pickup details and give the store's phone or email;", "say you don't have pickup details and suggest checking the store's website;"),
+    ("give the regular hours and the phone.", "give the regular hours."),
+    (" Give the store's phone or email only when the customer asks for it or when you cannot answer. Never write an email address or phone number from your own knowledge.", ""),
+    ("and give the store's phone or email in that same reply; do not ask whether the customer wants the contact details.",
+     "and suggest checking the store's website in that same reply."),
+)
+
 
 def _voice_without_links(text: str) -> str:
     for old, new in _VOICE_LINK_EDITS:
         if text.count(old) != 1:
             raise RuntimeError("bot/prompt.py changed: a link rule is no longer what bot/ringg_prompt.py rewords for voice. Update it.")
+        text = text.replace(old, new)
+    for old, new in _VOICE_CONTACT_EDITS:
+        if text.count(old) != 1:
+            raise RuntimeError("bot/prompt.py changed: a contact-details rule is no longer what bot/ringg_prompt.py rewords for voice. Update it.")
         text = text.replace(old, new)
     return text
 
