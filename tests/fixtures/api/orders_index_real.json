@@ -1,0 +1,158 @@
+{
+    "status": true,
+    "orders": [
+        {
+            "id": 135,
+            "uuid": "34122104799860352736018128541863",
+            "customer_id": "48472099698060571113751248049845",
+            "order_number": "122500023",
+            "grand_total": "334.96",
+            "order_status_id": "16258547982288712255350582171347",
+            "status": 1,
+            "created_at": "2026-11-24T10:52:52.000000Z",
+            "formatted_created_at": "11/24/2026",
+            "billing_full_name": "[redacted]",
+            "order_details": [
+                {
+                    "order_id": "34122104799860352736018128541863",
+                    "product_id": "52b9335f2d914478b766a1beac35cad6",
+                    "product_name": "Marstream Coffee Table and End Table",
+                    "product_sku": "T551T1",
+                    "product": {
+                        "id": 1,
+                        "uuid": "52b9335f2d914478b766a1beac35cad6",
+                        "brand_id": "7f7b6a70957944a29f846254196f9141",
+                        "slug": "marstream-coffee-table-and-end-table-t551t1",
+                        "sku": "T551T1",
+                        "image_url": "no-image.webp",
+                        "average_rating": 0,
+                        "review_count": 0
+                    }
+                }
+            ],
+            "order_status": {
+                "uuid": "16258547982288712255350582171347",
+                "name": "Pending",
+                "slug": "pending",
+                "status": 1
+            },
+            "customer": {
+                "uuid": "[redacted]",
+                "first_name": "[redacted]",
+                "last_name": "[redacted]",
+                "phone_number": "[redacted]",
+                "email": "[redacted]",
+                "full_name": "[redacted]"
+            },
+            "order_payments": []
+        },
+        {
+            "id": 136,
+            "uuid": "13794969277138346385328128812244",
+            "customer_id": "48472099698060571113751248049845",
+            "order_number": "122500024",
+            "grand_total": "1709.66",
+            "order_status_id": "11689398488832880918529334188393",
+            "status": 1,
+            "created_at": "2026-11-17T10:52:52.000000Z",
+            "formatted_created_at": "11/17/2026",
+            "billing_full_name": "[redacted]",
+            "order_details": [
+                {
+                    "order_id": "13794969277138346385328128812244",
+                    "product_id": "bf4dff97bea4445d982efe01a3f4e6e1",
+                    "product_name": "Kendanport King Platform Bed, Dresser, Mirror and Nightstand",
+                    "product_sku": "PCB1108B12",
+                    "product": {
+                        "id": 149,
+                        "uuid": "bf4dff97bea4445d982efe01a3f4e6e1",
+                        "brand_id": "7f7b6a70957944a29f846254196f9141",
+                        "slug": "kendanport-king-platform-bed-dresser-mirror-and-nightstand-pcb1108b12",
+                        "sku": "PCB1108B12",
+                        "image_url": "no-image.webp",
+                        "average_rating": 0,
+                        "review_count": 0
+                    }
+                },
+                {
+                    "order_id": "13794969277138346385328128812244",
+                    "product_id": "b80f9c0645ab45b79a0fe8c0d051d8c3",
+                    "product_name": "Danziar Queen Panel Platform Bed and 2 Nightstands",
+                    "product_sku": "B1013B33",
+                    "product": {
+                        "id": 186,
+                        "uuid": "b80f9c0645ab45b79a0fe8c0d051d8c3",
+                        "brand_id": "7f7b6a70957944a29f846254196f9141",
+                        "slug": "danziar-queen-panel-platform-bed-and-2-nightstands-b1013b33",
+                        "sku": "B1013B33",
+                        "image_url": "no-image.webp",
+                        "average_rating": 0,
+                        "review_count": 0
+                    }
+                }
+            ],
+            "order_status": {
+                "uuid": "11689398488832880918529334188393",
+                "name": "Shipped",
+                "slug": "shipped",
+                "status": 1
+            },
+            "customer": {
+                "uuid": "[redacted]",
+                "first_name": "[redacted]",
+                "last_name": "[redacted]",
+                "phone_number": "[redacted]",
+                "email": "[redacted]",
+                "full_name": "[redacted]"
+            },
+            "order_payments": []
+        },
+        {
+            "id": 137,
+            "uuid": "79531113053560665049625974858703",
+            "customer_id": "48472099698060571113751248049845",
+            "order_number": "122500025",
+            "grand_total": "401.41",
+            "order_status_id": "91645313285429087399744300496946",
+            "status": 1,
+            "created_at": "2026-10-17T10:52:52.000000Z",
+            "formatted_created_at": "10/17/2026",
+            "billing_full_name": "[redacted]",
+            "order_details": [
+                {
+                    "order_id": "79531113053560665049625974858703",
+                    "product_id": "9d016785742d43b7ad33cdae8b6efce2",
+                    "product_name": "Baystorm Full Panel Storage Bed and Nightstand",
+                    "product_sku": "B221B96",
+                    "product": {
+                        "id": 134,
+                        "uuid": "9d016785742d43b7ad33cdae8b6efce2",
+                        "brand_id": "7f7b6a70957944a29f846254196f9141",
+                        "slug": "baystorm-full-panel-storage-bed-and-nightstand-b221b96",
+                        "sku": "B221B96",
+                        "image_url": "no-image.webp",
+                        "average_rating": 0,
+                        "review_count": 0
+                    }
+                }
+            ],
+            "order_status": {
+                "uuid": "91645313285429087399744300496946",
+                "name": "Delivered",
+                "slug": "delivered",
+                "status": 1
+            },
+            "customer": {
+                "uuid": "[redacted]",
+                "first_name": "[redacted]",
+                "last_name": "[redacted]",
+                "phone_number": "[redacted]",
+                "email": "[redacted]",
+                "full_name": "[redacted]"
+            },
+            "order_payments": []
+        }
+    ],
+    "totalRecord": 3,
+    "currentPage": 1
+}

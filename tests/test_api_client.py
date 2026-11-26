@@ -482,6 +482,23 @@ def test_customer_orders_send_the_customers_own_token_and_keep_only_the_fields_t
     assert orders[2]["order_status"] is None and orders[2]["items"] == []
 
 
+def test_customer_orders_read_a_real_orders_response():
+    """orders_index_real.json is a real GET /orders response from the local API (26 Nov, test customer
+    bot-test@example.test made by dev_tools/seed_test_orders.php, captured and redacted by dev_tools/capture_orders.php).
+    It also carries the customer's name, phones, emails and payment rows (redacted here); none may come through."""
+    client, _ = make(fixture("orders_index_real"))
+    orders = client.customer_orders("tok.en.value")
+    assert [(o["order_number"], o["order_status"], o["grand_total"]) for o in orders] == [
+        ("122500023", "Pending", 334.96), ("122500024", "Shipped", 1709.66), ("122500025", "Delivered", 401.41)]
+    assert orders[0]["created_at"].startswith("2026-11-24")
+    assert orders[1]["items"] == [{"name": "Kendanport King Platform Bed, Dresser, Mirror and Nightstand", "sku": "PCB1108B12"},
+                                  {"name": "Danziar Queen Panel Platform Bed and 2 Nightstands", "sku": "B1013B33"}]
+    assert all(set(o) == {"order_number", "order_status", "created_at", "grand_total", "items"} for o in orders)
+    blob = json.dumps(orders)
+    for private in ("redacted", "billing", "customer", "payment", "uuid"):
+        assert private not in blob
+
+
 def test_the_token_is_not_kept_on_the_client_and_other_calls_never_carry_it():
     client, t = make(fixture("orders_index_from_controller_code"), fixture("brands"))
     client.customer_orders("tok.en.value")

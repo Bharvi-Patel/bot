@@ -34,9 +34,10 @@ def discover_enabled_stores(config_dir: pathlib.Path) -> list[str]:
     return stores
 
 
-def root_category_slugs(store_uuid: str) -> list[str]:
-    client = ApiClient(ApiConfig.from_env(store_uuid=store_uuid))
-    tree = client.category_tree()
+def root_category_slugs(store_uuid: str, client: ApiClient | None = None) -> list[str]:
+    """The store's top-level category slugs (GET /categories/tree), which api_products.py walks down from."""
+    client = client or ApiClient(ApiConfig.from_env(store_uuid=store_uuid))
+    tree = client.categories()
     return [c["slug"] for c in tree if isinstance(c, dict) and c.get("slug")]
 
 
