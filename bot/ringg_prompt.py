@@ -18,6 +18,7 @@ producing a prompt that talks about a tool the agent does not have, or tells a v
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 
 from bot.context import ChatContext
@@ -101,7 +102,22 @@ def _shared_config(vertical: str = "general"):
     return StoreConfig(store_uuid="shared", store_name=STORE_NAME_TOKEN, vertical=vertical)
 
 
-def ringg_prompt(cfg=None, channel: str = "text", vertical: str = "general") -> str:
+# Ringg offers an on-call tool to its model only where the prompt mentions it as @||tool_name||; a plain name is just text.
+ATTRIBUTE_VALUES_LINE = ("- To find which values a filter has (for example the colors or bed sizes among the matching products), use "
+                         "list_attribute_values with the filter group and the product word, then pass the value to search_products.")
+
+
+def with_tool_mentions(text: str) -> str:
+    """Every voice tool named in the prompt becomes Ringg's @||name|| mention, and list_attribute_values, which the shared
+    rules never name, gets one line so the agent is offered it too."""
+    from bot.ringg import VOICE_TOOLS
+    if "list_attribute_values" not in text:
+        text = text.rstrip() + "\n" + ATTRIBUTE_VALUES_LINE + "\n"
+    names = "|".join(sorted(VOICE_TOOLS, key=len, reverse=True))
+    return re.sub(rf"(?<![\w|])({names})(?![\w|])", r"@||\1||", text)
+
+
+def ringg_prompt(cfg=None, channel: str = "text", vertical: str = "general", tool_mentions: bool = False) -> str:
     if channel not in ("text", "voice"):
         raise ValueError("channel must be text or voice")
     if cfg is None:
@@ -122,7 +138,8 @@ def ringg_prompt(cfg=None, channel: str = "text", vertical: str = "general") -> 
         text = _voice_without_links(text)
     if not replaced or "get_order_status" in text:
         raise RuntimeError("bot/prompt.py changed: the order rules are no longer what bot/ringg_prompt.py removes. Update it.")
-    return text.rstrip() + "\n\n" + (VOICE_RULES if channel == "voice" else TEXT_RULES) + "\n"
+    text = text.rstrip() + "\n\n" + (VOICE_RULES if channel == "voice" else TEXT_RULES) + "\n"
+    return with_tool_mentions(text) if tool_mentions else text
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -131,6 +148,9 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Print the Ringg agent prompt (shared {{store_name}} by default, or for a specific store_uuid).")
     ap.add_argument("store_uuid", nargs="?", default=None, help="Optional store_uuid; omit to use {{store_name}} for a shared multi-store agent.")
     ap.add_argument("--channel", choices=("text", "voice"), default="text")
+    ap.add_argument("--plain-tool-names", action="store_true",
+                    help="Leave tool names as plain words. By default they are written as Ringg's @||tool|| mentions, which Ringg "
+                         "needs to offer the agent its on-call tools.")
     ap.add_argument("--vertical", choices=sorted(VERTICALS), default="general",
                     help="Vertical rules for the shared {{store_name}} prompt (ignored when store_uuid is given).")
     args = ap.parse_args(argv)
@@ -139,7 +159,7 @@ def main(argv: list[str] | None = None) -> None:
         if not valid_store_id(args.store_uuid):
             ap.error("store_uuid has characters that are not allowed")
         cfg = config_for(ChatContext(store_uuid=args.store_uuid))
-    sys.stdout.write(ringg_prompt(cfg, args.channel, vertical=args.vertical))
+    sys.stdout.write(ringg_prompt(cfg, args.channel, vertical=args.vertical, tool_mentions=not args.plain_tool_names))
 
 
 if __name__ == "__main__":
