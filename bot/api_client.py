@@ -398,10 +398,14 @@ class ApiClient:
 
     def search_products(self, query: str, page: int = 1, *, brand_ids: list[str] | None = None,
                         price_from: float | None = None, price_to: float | None = None,
-                        per_page: int | None = None, attribute_ids: list[str] | None = None) -> dict[str, Any]:
+                        per_page: int | None = None, attribute_ids: list[str] | None = None,
+                        facets: bool = False) -> dict[str, Any]:
         """POST /products/search?page=N with {"q": query} plus the filters confirmed against the real API
         (tests/fixtures/api and the captures of 16-17 Nov): brand_ids, attribute_ids, price_range {"from","to"}
         and per_page.
+        facets: the API's filter sidebar (categories, brands, price range, attribute values over EVERY match) is most of
+        the search's time, so it is asked for only when needed (attribute_options). With facets=False the body says
+        "facets": false and "filters" comes back empty; an API without that option ignores it and returns them anyway.
         The API requires q to be at least 2 characters (HTTP 422 otherwise), so that is checked here.
         Sorting is NOT sent yet: price_low_high lists the -0.01 placeholder products first. Several attribute ids
         mean "any of", so callers send one."""
@@ -410,6 +414,8 @@ class ApiClient:
             raise ApiError("search text must be at least 2 characters", status=422)
         params = {"page": page} if page and page > 1 else None
         body = {"q": query, **_filter_body(brand_ids, price_from, price_to, per_page, attribute_ids)}
+        if not facets:
+            body["facets"] = False
         payload = self._request("POST", "/products/search", params=params, body=body)
         data = payload.get("data") if isinstance(payload, dict) else None
         paged = data.get("product") if isinstance(data, dict) else None
@@ -443,7 +449,7 @@ class ApiClient:
         There is no store-wide list in the API: /product-filter-data returned no attribute groups for the Beds
         categories (it only lists attributes marked as filters), so the search response's facets are used.
         They show only what exists among the matches, e.g. no Bed Size group at all for a brand whose beds carry none."""
-        return self.search_products(query)["filters"]["attribute_options"]
+        return self.search_products(query, facets=True)["filters"]["attribute_options"]
 
     def blogs(self, page: int = 1, limit: int | None = None) -> dict[str, Any]:
         """GET /blogs/active: the store's live blog posts (title, slug, dates; the post text is read with blog()).
