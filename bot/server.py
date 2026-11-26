@@ -221,12 +221,26 @@ class _AccessLog:
                 log.debug("access log failed", exc_info=True)
 
 
+def _should_preload(preload: bool | None) -> bool:
+    """Warm up policy search at start: on by default for the real service, off when BOT_PRELOAD=0, without RAG_DB_URL, and
+    while pytest runs (tests build many apps and must not load a 0.5 GB model)."""
+    if preload is not None:
+        return preload
+    import sys
+    return os.getenv("BOT_PRELOAD", "1") != "0" and bool(os.getenv("RAG_DB_URL")) and "pytest" not in sys.modules
+
+
 def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callable[[], Any] | None = None,
                service_key: str | dict[str, str] | None = None, limits: Limits | None = None,
                events_sink: "events.EventSink | None" = None, ringg_secret: str | None = None,
                ringg_agent_stores: dict[str, Any] | None = None, ringg_tools_key: str | dict[str, str] | None = None,
-               tool_fn: Callable[..., dict] | None = None) -> FastAPI:
+               tool_fn: Callable[..., dict] | None = None, preload: bool | None = None) -> FastAPI:
     app = FastAPI(title="store chat bot", docs_url=None, redoc_url=None, openapi_url=None)
+    if _should_preload(preload):
+        # The embedding model takes ~30 s to load and Ringg gives a voice tool 30 s, so the first policy question after a
+        # start would time out. Load it (and open the database connection) in the background; /health answers meanwhile.
+        from bot.tools.search_policies import warm_up
+        threading.Thread(target=warm_up, name="policy-warm-up", daemon=True).start()
     key = service_key if service_key is not None else service_key_from_env()
     limits = limits or Limits.from_env()
     sink = events_sink if events_sink is not None else events.sink_from_env()
@@ -425,6 +439,6 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
                                               int((time.perf_counter() - started) * 1000)))
         except Exception:
             log.debug("call tool event failed", exc_info=True)
-        return result if isinstance(result, dict) else {"error": "tool_failed"}
+        return ringg.fit_for_voice(result) if isinstance(result, dict) else {"error": "tool_failed"}   # Ringg cuts replies at ~4,000 chars
 
     return app

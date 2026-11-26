@@ -77,3 +77,72 @@ def test_other_showroom_sentences_are_removed_before_the_model_sees_them():
     assert "Brooklyn" not in out and "Jamaica" not in out
     assert "Snap Finance welcomes all credit types." in out and "Terms are set by the lender." in out
     assert scrub_text("Nothing to remove here.") == "Nothing to remove here."
+
+# ---------- the shared database connection and the start-up warm-up ----------
+
+class _FakeCon:
+    def __init__(self, log, fail_first=False):
+        self.log, self.closed, self.fail_first = log, False, fail_first
+
+    def execute(self, sql, params):
+        import psycopg
+        if self.fail_first:
+            self.fail_first = False
+            raise psycopg.OperationalError("server closed the connection")
+        self.log.append(sql)
+        return self
+
+    def fetchall(self):
+        return [{"ok": 1}]
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_connect(monkeypatch, cons):
+    import psycopg
+    import bot.tools.search_policies as sp
+    opened = []
+
+    def connect(url, **kw):
+        con = cons[len(opened)]
+        opened.append(url)
+        return con
+    monkeypatch.setattr(psycopg, "connect", connect)
+    monkeypatch.setattr(sp, "_CONN", None)
+    monkeypatch.setattr(sp, "_CONN_URL", None)
+    monkeypatch.setenv("RAG_DB_URL", "postgresql://example/db")
+    return sp, opened
+
+
+def test_queries_share_one_open_connection(monkeypatch):
+    log = []
+    sp, opened = _fake_connect(monkeypatch, [_FakeCon(log)])
+    sp._default_run_query("q1", [])
+    sp._default_run_query("q2", [])
+    assert opened == ["postgresql://example/db"] and log == ["q1", "q2"]      # connected once, used twice
+
+
+def test_a_dropped_connection_is_replaced_once_and_the_query_retried(monkeypatch):
+    log = []
+    first, second = _FakeCon(log, fail_first=True), _FakeCon(log)
+    sp, opened = _fake_connect(monkeypatch, [first, second])
+    assert sp._default_run_query("q", []) == [{"ok": 1}]
+    assert len(opened) == 2 and first.closed and log == ["q"]
+
+
+def test_warm_up_loads_the_model_and_the_connection_and_never_raises(monkeypatch):
+    import bot.embeddings as emb
+    log, embedded = [], []
+    sp, opened = _fake_connect(monkeypatch, [_FakeCon(log)])
+    monkeypatch.setattr(emb, "embed_query", lambda q: embedded.append(q) or [0.0])
+    sp.warm_up()
+    assert embedded and opened and log
+    monkeypatch.setattr(emb, "embed_query", lambda q: (_ for _ in ()).throw(RuntimeError("no model")))
+    sp.warm_up()                                                               # a failure is logged, never raised
+
+
+def test_the_service_preloads_only_outside_tests_and_when_allowed(monkeypatch):
+    from bot.server import _should_preload
+    assert _should_preload(None) is False                                      # pytest is running
+    assert _should_preload(True) is True and _should_preload(False) is False

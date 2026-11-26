@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from typing import Any, Callable
 
 from bot.store_config import resolve_store_uuid
@@ -87,14 +88,56 @@ def scrub_text(text: str, terms: tuple[str, ...] | None = None) -> str:
     return "\n".join(kept)
 
 
+# One connection to the RAG database, kept open and shared. Opening one to Neon takes about 1.5 s (TLS + auth) and every
+# search runs two queries, so a new connection per query cost about 3 s a search (measured 26 Nov). Neon closes idle
+# connections when it suspends the database, so a broken connection is replaced once and the query retried.
+_CONN: Any = None
+_CONN_URL: str | None = None
+_CONN_LOCK = threading.Lock()
+
+
 def _default_run_query(sql: str, params: list) -> list[dict]:
+    global _CONN, _CONN_URL
     import psycopg
     from psycopg.rows import dict_row
     url = os.environ.get("RAG_DB_URL")
     if not url:
         raise RuntimeError("RAG_DB_URL is not set")
-    with psycopg.connect(url, row_factory=dict_row) as con:
-        return con.execute(sql, params).fetchall()
+    with _CONN_LOCK:                                    # one query at a time on the shared connection (each takes ~0.3 s)
+        for attempt in (1, 2):
+            if _CONN is None or _CONN.closed or _CONN_URL != url:
+                if _CONN is not None:
+                    _close_quietly(_CONN)
+                _CONN = psycopg.connect(url, row_factory=dict_row, autocommit=True, connect_timeout=15)
+                _CONN_URL = url
+            try:
+                return _CONN.execute(sql, params).fetchall()
+            except psycopg.OperationalError:            # dropped by the server (Neon suspend, network): reconnect once
+                _close_quietly(_CONN)
+                _CONN = None
+                if attempt == 2:
+                    raise
+    return []
+
+
+def _close_quietly(con: Any) -> None:
+    try:
+        con.close()
+    except Exception:
+        pass
+
+
+def warm_up() -> None:
+    """Load the embedding model and open the database connection now, so the first policy question does not wait for them
+    (the model takes about 30 s to load, and Ringg gives a voice tool 30 s). Never raises."""
+    try:
+        from bot.embeddings import embed_query
+        embed_query("warm up")
+        if os.environ.get("RAG_DB_URL"):
+            _default_run_query("select 1 as ok", [])
+        log.info("policy search warmed up")
+    except Exception:
+        log.warning("policy search warm-up failed; the first question will load it instead", exc_info=True)
 
 
 def _vector_literal(vec: list[float]) -> str:

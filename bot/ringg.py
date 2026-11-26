@@ -142,6 +142,65 @@ VOICE_TOOLS = ("search_products", "get_product_details", "recommend_products", "
                "list_attribute_values", "get_shipping_options", "get_store_info", "check_inventory")
 assert "get_order_status" not in VOICE_TOOLS
 
+# Ringg hands its model at most about 4,000 characters of a tool's reply and cuts the rest, mid-JSON (seen with
+# test_api_tool on 26 Nov). Policy text and recommendations are longer, so a voice reply is fitted under this size first.
+MAX_VOICE_RESULT_CHARS = 3500
+_LIST_KEYS = ("chunks", "products")                       # the long lists a tool result can carry
+_LONG_TEXT_MIN = 240                                      # a text field is never cut shorter than this
+_KEEP_AT_LEAST = 3                                        # the voice rules read at most three results anyway
+_CHUNK_DROP_KEYS = ("heading", "source_key", "similarity", "source_type")   # not needed to answer by voice
+
+
+def _size(obj: Any) -> int:
+    return len(json.dumps(obj, ensure_ascii=False, default=str))
+
+
+def _cut_words(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:") + " ..."
+
+
+def fit_for_voice(result: Any, max_chars: int = MAX_VOICE_RESULT_CHARS) -> Any:
+    """A tool result small enough for Ringg to pass on whole. Small results come back unchanged. Otherwise, in order:
+    chunk fields a voice answer does not use are dropped, the last (least relevant) items are dropped down to three, the
+    longest text in the list is shortened step by step (never below _LONG_TEXT_MIN characters, cut at a word), and then
+    more items are dropped (at least one is kept).
+    Every other key, the tool's "note" with its instructions included, is kept as it is, and "voice_note" says what was
+    left out. If even that does not fit, the reduced result is returned anyway: never an error instead of an answer."""
+    if not isinstance(result, dict) or _size(result) <= max_chars:
+        return result
+    out = dict(result)
+    key = next((k for k in _LIST_KEYS if isinstance(out.get(k), list) and out[k]), None)
+    if key is None:
+        return result
+    total = len(out[key])
+    items = [dict(i) if isinstance(i, dict) else i for i in out[key]]
+    if key == "chunks":
+        items = [{k: v for k, v in i.items() if k not in _CHUNK_DROP_KEYS} if isinstance(i, dict) else i for i in items]
+    out[key] = items
+    budget = max_chars - 170                                           # room for the voice_note added below
+    while _size(out) > budget and len(items) > _KEEP_AT_LEAST:      # results are best-first: keep the top ones whole
+        items.pop()
+    shortened = False
+    while _size(out) > budget:
+        longest = max(((n, k, v) for n, i in enumerate(items) if isinstance(i, dict)
+                       for k, v in i.items() if isinstance(v, str) and len(v) > _LONG_TEXT_MIN),
+                      key=lambda t: len(t[2]), default=None)
+        if longest is not None:
+            n, k, v = longest
+            items[n][k] = _cut_words(v, max(_LONG_TEXT_MIN, int(len(v) * 0.7)))
+            shortened = True
+        elif len(items) > 1:
+            items.pop()
+        else:
+            break
+    out["voice_note"] = (f"Shortened for a phone call: {len(items)} of {total} {key.rstrip('s')} results kept"
+                         + ("; long texts were shortened (marked ...)" if shortened else "") + ". Answer only from what is here.")
+    return out
+
+
 _NUM_ARGS = ("min_price", "max_price", "max_width_in")
 _INT_ARGS = ("limit",)
 _BLANK_WORDS = frozenset({
