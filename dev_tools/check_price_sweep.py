@@ -5,9 +5,9 @@ For every product it simulates the failure we fixed: the model lists search resu
 Results are served in pages of 8, as search_products does, in two orders: by name (a page of neighbours) and by price
 (a page of near-identical prices, the hardest case for matching a price to its product).
 
-    python check_price_sweep.py                  all products, both orders, both rounding styles
-    python check_price_sweep.py --limit 2000     first 2000 products only (quick run)
-    python check_price_sweep.py --show 25        print up to 25 examples of each problem (default 10)
+    python -m dev_tools.check_price_sweep                  all products, both orders, both rounding styles
+    python -m dev_tools.check_price_sweep --limit 2000     first 2000 products only (quick run)
+    python -m dev_tools.check_price_sweep --show 25        print up to 25 examples of each problem (default 10)
 
 Reads the numbers like this:
     repaired right   the reply came back with every exact price on the right product: the customer sees the true price

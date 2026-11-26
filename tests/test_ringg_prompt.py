@@ -114,3 +114,25 @@ def test_voice_prompt_does_not_volunteer_contacts_but_gives_them_when_asked_and_
     assert "the store's website" in voice                                              # the fallback when a tool has no answer
     chat = ringg_prompt(channel="text", vertical=vertical)
     assert "phone or email" in chat and "contact details" in chat                      # the chat prompt is unchanged
+
+
+@pytest.mark.parametrize("channel", ["text", "voice"])
+def test_tool_mentions_use_ringgs_syntax_for_every_voice_tool_and_nothing_else(channel):
+    import re
+    from bot.ringg import VOICE_TOOLS
+    text = ringg_prompt(channel=channel, vertical="furniture", tool_mentions=True)
+    assert set(re.findall(r"@\|\|([A-Za-z0-9_-]+)\|\|", text)) == set(VOICE_TOOLS)     # all ten, list_attribute_values included
+    left = re.sub(r"@\|\|[A-Za-z0-9_-]+\|\|", "", text)
+    assert not any(name in left for name in VOICE_TOOLS)                                # no plain tool name left behind
+    assert "@||@||" not in text
+    plain = ringg_prompt(channel=channel, vertical="furniture")
+    assert "@||" not in plain
+    assert re.sub(r"@\|\|([A-Za-z0-9_-]+)\|\|", r"\1", text).startswith(plain.rstrip())  # same prompt, plus one added line
+
+
+def test_the_command_writes_mentions_by_default(capsys):
+    from bot.ringg_prompt import main
+    main(["--channel", "voice", "--vertical", "furniture"])
+    assert "@||search_products||" in capsys.readouterr().out
+    main(["--channel", "voice", "--vertical", "furniture", "--plain-tool-names"])
+    assert "@||" not in capsys.readouterr().out

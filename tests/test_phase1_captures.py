@@ -102,7 +102,7 @@ def test_search_tool_with_a_size_filter_end_to_end():
     seen = []
     out = search_products({"keyword": "bed", "attribute_group": "Bed Size", "attribute_value": "Queen"}, client=real(seen))
     assert ("POST", "/products/search", {"q": "bed"}) in seen                                   # first the options of this keyword
-    assert ("POST", "/products/search", {"q": "bed", "attribute_ids": [QUEEN_ID]}) in seen      # then the filtered list
+    assert ("POST", "/products/search", {"q": "bed", "attribute_ids": [QUEEN_ID], "facets": False}) in seen   # then the filtered list
     assert out["applied_filters"]["attribute"] == {"group": "Bed Size", "value": "Queen"}
     assert out["count"] == 8 and all(p["price_varies"] and p["price"] is None for p in out["products"])
     assert out["products"][0]["shown_option"] == {"option": "Queen", "price": 399.99}

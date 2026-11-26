@@ -1,12 +1,11 @@
 """Print the rows behind one case's expected answer, so you can see whether the answer key really matches the question.
 
-    python peek_truth.py eval_heldout held-outdoor            # first 60 distinct names with price range
-    python peek_truth.py eval_heldout held-outdoor 150        # first 150
+    python -m evals.peek_truth eval_heldout held-outdoor            # first 60 distinct names with price range
+    python -m evals.peek_truth eval_heldout held-outdoor 150        # first 150
 """
-import importlib
 import sys
 
-from eval_accuracy import fetch_truth
+from evals.eval_accuracy import fetch_truth, load_cases
 from dev_tools.db import run_query
 
 
@@ -14,7 +13,7 @@ def main() -> int:
     if len(sys.argv) < 3:
         print(__doc__)
         return 2
-    cases = importlib.import_module(sys.argv[1]).CASES
+    cases = load_cases(sys.argv[1])
     limit = int(sys.argv[3]) if len(sys.argv) > 3 else 60
     case = next((c for c in cases if c["id"] == sys.argv[2]), None)
     if not case or not case.get("truth"):

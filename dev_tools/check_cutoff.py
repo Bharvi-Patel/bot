@@ -1,4 +1,4 @@
-"""Finds a safe cosine cutoff for search_policies. Run from the project folder:  python check_cutoff.py
+"""Finds a safe cosine cutoff for search_policies. Run from the project folder:  python -m dev_tools.check_cutoff
 Needs .env with RAG_DB_URL. Uses no LLM quota. Prints the best similarity for each question with the cutoff switched off."""
 from dotenv import load_dotenv
 load_dotenv()

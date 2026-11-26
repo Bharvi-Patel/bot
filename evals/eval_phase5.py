@@ -1,7 +1,7 @@
 """Phase 5 check: the negative, injection and routing questions from Appendix D, run through the real router.
 (The order questions #23, #24, #25, #32 moved to eval_phase6.py, which needs a real order to test with.)
 
-  python eval_phase5.py
+  python -m evals.eval_phase5
 Needs SJ_DB_*, RAG_DB_URL and GROQ_API_KEY (or GEMINI_API_KEY) in .env. It calls the live model, so each run uses a little quota.
 It cannot judge answers for you. It prints the tools used and the reply, and counts the two hard failures:
   - hallucinated prices (a reply with a $ amount no tool returned: blocked as unverified_price, target ZERO)

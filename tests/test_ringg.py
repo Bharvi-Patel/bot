@@ -615,3 +615,58 @@ def test_http_webhook_wildcard_without_a_settings_folder_records_nothing(monkeyp
     ev = {**COMPLETED, "custom_args_values": {"store_uuid": STORE}}
     assert c.post("/webhooks/ringg", json=ev, headers={"X-Webhook-Secret": "whsec"}).status_code == 200
     assert sink.rows == []
+
+
+# ---------- voice replies fit what Ringg passes on (~4,000 characters) ----------
+
+def _policy_result(n=5, text_len=2000):
+    return {"found": True, "cutoff": 0.55, "note": "Answer ONLY from these chunks.",
+            "chunks": [{"title": f"Page {i}", "heading": f"Page {i} > Part", "page": f"/p{i}", "source_type": "policy",
+                        "source_key": f"p{i}", "similarity": 0.9 - i / 10, "content": ("word " * (text_len // 5)).strip()}
+                       for i in range(n)]}
+
+
+def test_small_voice_results_are_returned_unchanged():
+    from bot.ringg import fit_for_voice
+    small = {"count": 1, "products": [{"name": "Sofa", "price": 499.0}], "note": "n"}
+    assert fit_for_voice(small) is small
+
+
+def test_long_policy_text_is_fitted_keeping_the_best_chunks_and_the_note():
+    from bot.ringg import MAX_VOICE_RESULT_CHARS, fit_for_voice
+    big = _policy_result()
+    out = fit_for_voice(big)
+    assert len(json.dumps(out, ensure_ascii=False)) <= MAX_VOICE_RESULT_CHARS
+    assert [c["title"] for c in out["chunks"]] == ["Page 0", "Page 1", "Page 2"]       # best-first, the top three kept
+    assert out["note"] == big["note"] and out["found"] is True and out["cutoff"] == 0.55
+    assert all(c["content"].endswith("...") and len(c["content"]) >= 240 for c in out["chunks"])
+    assert "heading" not in out["chunks"][0] and "page" in out["chunks"][0]
+    assert "3 of 5" in out["voice_note"]
+    assert len(big["chunks"]) == 5 and "heading" in big["chunks"][0]                   # the original is not modified
+
+
+def test_a_long_product_list_loses_its_last_items_before_any_text_is_shortened():
+    from bot.ringg import MAX_VOICE_RESULT_CHARS, fit_for_voice
+    products = [{"name": f"Recliner {i}", "price": 400 + i, "description": "soft " * 120} for i in range(8)]
+    out = fit_for_voice({"found": True, "products": products, "note": "n"})
+    assert len(json.dumps(out)) <= MAX_VOICE_RESULT_CHARS
+    names = [p["name"] for p in out["products"]]
+    assert 3 <= len(names) < 8 and names == [f"Recliner {i}" for i in range(len(names))]   # best-first, only the tail dropped
+    assert all(p["description"] == products[0]["description"] for p in out["products"])  # fits by dropping: no text cut
+
+
+def test_an_unshrinkable_result_is_still_returned_not_turned_into_an_error():
+    from bot.ringg import fit_for_voice
+    huge = {"note": "x" * 5000, "chunks": [{"title": "t", "content": "short"}]}
+    assert fit_for_voice(huge)["note"] == huge["note"]
+    assert fit_for_voice({"error": "tool_failed", "note": "y" * 5000})["error"] == "tool_failed"
+
+
+def test_the_voice_endpoint_fits_large_results():
+    from bot.ringg import MAX_VOICE_RESULT_CHARS
+    calls = []
+    c, sink = _tools_client(calls, result=_policy_result())
+    r = c.post("/ringg/tools/search_policies", json={"question": "returns"}, headers=TH)
+    assert r.status_code == 200 and len(r.content.decode()) <= MAX_VOICE_RESULT_CHARS + 50
+    assert len(r.json()["chunks"]) == 3 and "voice_note" in r.json()
+    assert sink.rows[0]["tool"]["found"] is True                                         # the funnel event still sees the real result

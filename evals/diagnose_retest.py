@@ -5,11 +5,11 @@ filed under, and (2) what search_products actually returns for the searches the 
 but the tool never returns means the tool (category / keyword / parts filter) is hiding it; a product the tool returns first
 that the grader does not expect is probably a part or accessory.
 
-Run from the repo folder:  python diagnose_retest.py
+Run from the repo folder:  python -m evals.diagnose_retest
 """
 from __future__ import annotations
 
-from eval_retest import CASES
+from evals.eval_retest import CASES
 from dev_tools.db import run_query
 from bot.tools.search_products import search_products
 

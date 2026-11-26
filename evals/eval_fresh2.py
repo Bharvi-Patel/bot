@@ -4,9 +4,9 @@
   2. If a case fails, fix the CLASS of problem, retire the failed case, write a new one.
   3. Expected answers come live from the database, so the catalog can change without breaking them.
 
-    python eval_accuracy.py --cases eval_fresh2 --check-truth      # FIRST, no model: every query must return rows
-    python eval_accuracy.py --cases eval_fresh2 --runs 3 --max-tokens 500000
-    python eval_accuracy.py --cases eval_fresh2 --runs 3 --order <ORDER> --email <EMAIL>   # only if you want the {ORDER} cases
+    python -m evals.eval_accuracy --cases eval_fresh2 --check-truth      # FIRST, no model: every query must return rows
+    python -m evals.eval_accuracy --cases eval_fresh2 --runs 3 --max-tokens 500000
+    python -m evals.eval_accuracy --cases eval_fresh2 --runs 3 --order <ORDER> --email <EMAIL>   # only if you want the {ORDER} cases
 
 What is new compared with the earlier sets (ids are all prefixed fresh2-):
   - product types not used before: office chair, stool, ottoman, console table, headboard, wardrobe, chest, mirror
@@ -25,8 +25,8 @@ lists something cheaper than the lower bound. It still fails if the reply invent
 """
 from __future__ import annotations
 
-from eval_cases import BED, SOFA, C, under  # noqa: F401
-from eval_fresh import ACCENT_CHAIR, DINING_TABLE, NIGHTSTAND, RECLINER, TVSTAND, cheapest  # noqa: F401
+from evals.eval_cases import BED, SOFA, C, under  # noqa: F401
+from evals.eval_fresh import ACCENT_CHAIR, DINING_TABLE, NIGHTSTAND, RECLINER, TVSTAND, cheapest  # noqa: F401
 
 
 def between(where: str, lo: float, hi: float, n: int = 5000) -> dict:

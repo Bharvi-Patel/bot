@@ -196,7 +196,7 @@ def test_search_products_real_response():
     res = client.search_products("bed")
     req = t.requests[0]
     assert req.get_method() == "POST" and req.full_url == "http://127.0.0.1:8001/products/search"
-    assert json.loads(req.data) == {"q": "bed"}
+    assert json.loads(req.data) == {"q": "bed", "facets": False}       # listing only: the API skips its filter sidebar
     assert (res["page"], res["per_page"], res["total"], res["last_page"]) == (1, 16, 4976, 311)
     assert len(res["products"]) == 16
     first = res["products"][0]
@@ -218,7 +218,7 @@ def test_search_page_two_uses_page_param():
     client, t = make(fixture("product_search"))
     client.search_products("bed", page=2)
     assert t.requests[0].full_url.endswith("/products/search?page=2")
-    assert json.loads(t.requests[0].data) == {"q": "bed"}
+    assert json.loads(t.requests[0].data) == {"q": "bed", "facets": False}
 
 
 # ---------- product detail ----------
@@ -318,13 +318,20 @@ def test_search_sends_brand_and_price_in_the_confirmed_format():
     client.search_products("bed", brand_ids=["24535729948324335664029000859186"], price_from=100, price_to=900.5, per_page=40)
     assert json.loads(t.requests[0].data) == {
         "q": "bed", "brand_ids": ["24535729948324335664029000859186"],
-        "price_range": {"from": 100, "to": 900.5}, "per_page": 40}   # {"min","max"} is ignored by the API
+        "price_range": {"from": 100, "to": 900.5}, "per_page": 40, "facets": False}   # {"min","max"} is ignored by the API
 
 
 def test_search_without_filters_sends_only_q():
     client, t = make(fixture("product_search"))
     client.search_products("bed")
-    assert json.loads(t.requests[0].data) == {"q": "bed"}
+    assert json.loads(t.requests[0].data) == {"q": "bed", "facets": False}
+
+
+def test_search_asks_for_facets_only_when_told_to():
+    client, t = make(fixture("product_search"))
+    with_facets = client.search_products("bed", facets=True)
+    assert json.loads(t.requests[0].data) == {"q": "bed"}                                     # the API's default: sidebar included
+    assert any(g["group"] == "Bed Size" for g in with_facets["filters"]["attribute_options"])
 
 
 @pytest.mark.parametrize("text", ["", " ", "a", " b "])
@@ -338,7 +345,7 @@ def test_search_text_under_two_characters_is_refused_without_a_request(text):
 def test_search_trims_the_text_before_sending():
     client, t = make(fixture("product_search"))
     client.search_products("  bed ")
-    assert json.loads(t.requests[0].data) == {"q": "bed"}
+    assert json.loads(t.requests[0].data) == {"q": "bed", "facets": False}
 
 
 def test_unfiltered_category_request_carries_the_paging_workaround():
@@ -381,7 +388,7 @@ def test_bad_filter_values_are_refused_before_any_request(kwargs):
 def test_search_sends_one_attribute_id():
     client, t = make(fixture("product_search"))
     client.search_products("bed", attribute_ids=["67ace390fcb040008ecdc568b52e13f2"])
-    assert json.loads(t.requests[0].data) == {"q": "bed", "attribute_ids": ["67ace390fcb040008ecdc568b52e13f2"]}
+    assert json.loads(t.requests[0].data) == {"q": "bed", "attribute_ids": ["67ace390fcb040008ecdc568b52e13f2"], "facets": False}
 
 
 def test_category_request_sends_attribute_ids_with_the_paging_workaround():
@@ -401,7 +408,7 @@ def test_bad_attribute_ids_are_refused_before_any_request(bad):
 def test_attribute_options_carry_the_ids_the_filter_takes():
     client, t = make(fixture("product_search"))
     options = client.attribute_options("bed")
-    assert json.loads(t.requests[0].data) == {"q": "bed"}
+    assert json.loads(t.requests[0].data) == {"q": "bed"}             # no "facets": false: the attribute values come from the facets
     group = next(g for g in options if g["group"] == "Bed Size")
     assert {"id": "67ace390fcb040008ecdc568b52e13f2", "name": "Queen"} in group["values"]   # the id the real API filtered Queen by
 
@@ -473,6 +480,23 @@ def test_customer_orders_send_the_customers_own_token_and_keep_only_the_fields_t
     for private in ("customer@example.com", "Customer", "(000) 000-0000", "txn_SECRET_1", "card", "cust-9", "uuid"):
         assert private not in blob
     assert orders[2]["order_status"] is None and orders[2]["items"] == []
+
+
+def test_customer_orders_read_a_real_orders_response():
+    """orders_index_real.json is a real GET /orders response from the local API (26 Nov, test customer
+    bot-test@example.test made by dev_tools/seed_test_orders.php, captured and redacted by dev_tools/capture_orders.php).
+    It also carries the customer's name, phones, emails and payment rows (redacted here); none may come through."""
+    client, _ = make(fixture("orders_index_real"))
+    orders = client.customer_orders("tok.en.value")
+    assert [(o["order_number"], o["order_status"], o["grand_total"]) for o in orders] == [
+        ("122500023", "Pending", 334.96), ("122500024", "Shipped", 1709.66), ("122500025", "Delivered", 401.41)]
+    assert orders[0]["created_at"].startswith("2026-11-24")
+    assert orders[1]["items"] == [{"name": "Kendanport King Platform Bed, Dresser, Mirror and Nightstand", "sku": "PCB1108B12"},
+                                  {"name": "Danziar Queen Panel Platform Bed and 2 Nightstands", "sku": "B1013B33"}]
+    assert all(set(o) == {"order_number", "order_status", "created_at", "grand_total", "items"} for o in orders)
+    blob = json.dumps(orders)
+    for private in ("redacted", "billing", "customer", "payment", "uuid"):
+        assert private not in blob
 
 
 def test_the_token_is_not_kept_on_the_client_and_other_calls_never_carry_it():

@@ -1,6 +1,6 @@
 """Shows, for the cheapest products whose name matches a pattern, the Bed Size each one records and what its PARENT is filed under.
 Run from the project folder (needs .env with the database settings; no model quota):
-    python check_size_data.py "Queen%Mattress"          (default)
+    python -m dev_tools.check_size_data "Queen%Mattress"          (default)
 """
 import sys
 from dotenv import load_dotenv

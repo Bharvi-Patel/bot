@@ -2,15 +2,15 @@
 NOT used to tune the bot. Run it ONCE and report that number; do not edit the prompt and rerun to improve it,
 or it stops being an honest test.
 
-    python eval_accuracy.py --cases eval_fresh --check-truth      # first: checks every database query returns rows (no model)
-    python eval_accuracy.py --cases eval_fresh --runs 3 --max-tokens 500000
+    python -m evals.eval_accuracy --cases eval_fresh --check-truth      # first: checks every database query returns rows (no model)
+    python -m evals.eval_accuracy --cases eval_fresh --runs 3 --max-tokens 500000
 
 Same format as eval_cases.py (see its docstring). Questions marked REVIEW depend on what your website says: open the page
 once and change the expected words if your store's real answer differs from my guess.
 """
 from __future__ import annotations
 
-from eval_cases import BED, C, SOFA, in_category, under  # noqa: F401  (in_category kept for easy editing)
+from evals.eval_cases import BED, C, SOFA, in_category, under  # noqa: F401  (in_category kept for easy editing)
 
 
 def cheapest(where: str) -> dict:
