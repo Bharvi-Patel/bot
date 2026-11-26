@@ -2,8 +2,8 @@
 fresh2 cases whose answer key was wrong. Nobody has run these. Same rules as the other sets: run once, report that number,
 and fix classes of problems, not cases.
 
-    python eval_accuracy.py --cases eval_retest --check-truth      # first, no model: every query must return rows
-    python eval_accuracy.py --cases eval_retest --runs 3 --max-tokens 500000
+    python -m evals.eval_accuracy --cases eval_retest --check-truth      # first, no model: every query must return rows
+    python -m evals.eval_accuracy --cases eval_retest --runs 3 --max-tokens 500000
 
 Problem classes and the cases that probe them (fresh2 ids in brackets are the failures that found them):
   hours from memory     retest-christmas-hours, retest-weekend-close      [fresh2-holiday-hours]
@@ -15,8 +15,8 @@ Problem classes and the cases that probe them (fresh2 ids in brackets are the fa
 """
 from __future__ import annotations
 
-from eval_cases import BED, C, under
-from eval_fresh import DINING_TABLE, RECLINER, cheapest
+from evals.eval_cases import BED, C, under
+from evals.eval_fresh import DINING_TABLE, RECLINER, cheapest
 
 PARTS = "name NOT LIKE '%Box _ of _%'"            # same idea as the filter in bot/tools/search_products.py
 DRESSER = "name LIKE '%Dresser%' AND name NOT LIKE '%Mirror%' AND name NOT LIKE '%Dresser Top%'"   # "Akerson Dresser Top" is a part

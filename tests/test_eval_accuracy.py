@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-import eval_accuracy as ev
-import eval_cases
+from evals import eval_accuracy as ev
+from evals import eval_cases
 
 
 def out(reply, tools=(), blocked=None):

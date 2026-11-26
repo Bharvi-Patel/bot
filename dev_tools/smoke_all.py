@@ -1,5 +1,5 @@
 """Run the three small tools against your dev database and print what the bot would receive.
-Set the SJ_DB_* variables first (see .env.example), then:  python smoke_all.py
+Set the SJ_DB_* variables first (see .env.example), then:  python -m dev_tools.smoke_all
 """
 import json
 import time

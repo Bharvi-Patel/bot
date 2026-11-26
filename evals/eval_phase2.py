@@ -3,9 +3,9 @@
 For each question it makes the tool call(s) a model would make, then checks the result against an
 independent query on the same views. Nothing here calls an LLM and nothing contains customer data.
 
-  python eval_phase2.py
-  python eval_phase2.py --loreo "Loreo Sofa" --adlai "Adlai Sofa"     (change the names if yours differ)
-  python eval_phase2.py --mattress-slug some-category-slug              (pick the mattress category yourself)
+  python -m evals.eval_phase2
+  python -m evals.eval_phase2 --loreo "Loreo Sofa" --adlai "Adlai Sofa"     (change the names if yours differ)
+  python -m evals.eval_phase2 --mattress-slug some-category-slug              (pick the mattress category yourself)
 Each question can take 10 to 30 seconds. A "running" line is printed first so you can see it is working.
 
 Statuses:  PASS    the tool output meets the pass condition

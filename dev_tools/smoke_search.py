@@ -1,5 +1,5 @@
 """Run a few real searches against your dev database as chatbot_ro.
-Set the SJ_DB_* variables first (see .env.example), then:  python smoke_search.py
+Set the SJ_DB_* variables first (see .env.example), then:  python -m dev_tools.smoke_search
 """
 import json
 import time

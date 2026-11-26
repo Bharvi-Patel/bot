@@ -1,6 +1,6 @@
 """Phase 4 check: the product recommendation questions from Appendix D (19, 20, 22), run through recommend_products.
 
-  python eval_phase4.py
+  python -m evals.eval_phase4
 Needs SJ_DB_* (read-only MySQL views, as in Phase 2) and RAG_DB_URL (Postgres). The first run loads the embedding model.
 For each question it makes the tool call a model would make (hard filters already extracted), then checks:
   - every price equals the live sale_price in vw_chat_products (no hallucinated prices)

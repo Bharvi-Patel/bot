@@ -1,7 +1,7 @@
 """Print every failing case from an eval .jsonl: the question, tools used, why it failed, the reply the safety check threw away
 (if any) and the replies. The first failing run of each case is shown in full, later ones shortened.
 
-    python show_failures.py eval_runs\\eval_20261015_162151.jsonl
+    python -m evals.show_failures eval_runs\\eval_20261015_162151.jsonl
 """
 import json
 import sys

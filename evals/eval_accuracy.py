@@ -1,10 +1,10 @@
 """Measure how accurate the bot is, per kind of question, with the model's run-to-run variation included.
 
-  python eval_accuracy.py --check-truth                     # no model: run every ground-truth query, find broken cases
-  python eval_accuracy.py --runs 1 --limit 10               # quick smoke run
-  python eval_accuracy.py --runs 3 --order 102500001 --email order2@example.test
-  python eval_accuracy.py --only product_search,beds-500    # case ids or types
-  python eval_accuracy.py --resume eval_runs/eval_20261007_101500.jsonl     # continue after a model rate limit
+  python -m evals.eval_accuracy --check-truth                     # no model: run every ground-truth query, find broken cases
+  python -m evals.eval_accuracy --runs 1 --limit 10               # quick smoke run
+  python -m evals.eval_accuracy --runs 3 --order 102500001 --email order2@example.test
+  python -m evals.eval_accuracy --only product_search,beds-500    # case ids or types
+  python -m evals.eval_accuracy --resume eval_runs/eval_20261007_101500.jsonl     # continue after a model rate limit
 
 What it does: asks every question in eval_cases.py in a fresh conversation, N times. The expected answer comes from the
 database (ground-truth SQL) or from words the reply must / must not contain. A case counts as "stable pass" only if it
@@ -381,6 +381,12 @@ def preflight(cases: list[dict]) -> str | None:
     return None
 
 
+def load_cases(name: str) -> list:
+    """CASES from a case module. A bare name such as eval_fresh means the module in this evals/ package."""
+    import importlib
+    return importlib.import_module(name if "." in name else f"evals.{name}").CASES
+
+
 def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | None = None, run_query: Callable | None = None,
          cases: list[dict] | None = None, preflight_fn: Callable | None = None) -> int:
     ap = argparse.ArgumentParser(description="Measure bot accuracy.")
@@ -399,8 +405,7 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
     args = ap.parse_args(argv)
 
     if cases is None:
-        import importlib
-        cases = importlib.import_module(args.cases).CASES
+        cases = load_cases(args.cases)
     all_case_ids = {c["id"] for c in cases}
     cases = select(list(cases), args.only, args.limit)
     if args.list:
@@ -474,10 +479,10 @@ def main(argv: list[str] | None = None, llm: Any = None, answer_fn: Callable | N
                 print(f"  run {run_idx} {c['id']:22} {rec['status'].upper():8} {'; '.join(rec['reasons'])[:90]}")
                 infra_streak = infra_streak + 1 if rec["status"] == "infra" else 0
                 if infra_streak >= 3:
-                    print(f"\nStopping: 3 provider errors in a row (rate limit?). Continue later with:\n  python eval_accuracy.py --resume {path}" + (f" --cases {args.cases}" if args.cases != "eval_cases" else ""))
+                    print(f"\nStopping: 3 provider errors in a row (rate limit?). Continue later with:\n  python -m evals.eval_accuracy --resume {path}" + (f" --cases {args.cases}" if args.cases != "eval_cases" else ""))
                     stop = True
                 elif args.max_tokens and (getattr(llm, "tokens", 0) or 0) - start_tokens >= args.max_tokens:
-                    print(f"\nStopping: reached the --max-tokens budget ({args.max_tokens:,}). Continue later with:\n  python eval_accuracy.py --resume {path}" + (f" --cases {args.cases}" if args.cases != "eval_cases" else ""))
+                    print(f"\nStopping: reached the --max-tokens budget ({args.max_tokens:,}). Continue later with:\n  python -m evals.eval_accuracy --resume {path}" + (f" --cases {args.cases}" if args.cases != "eval_cases" else ""))
                     stop = True
                 if stop:
                     break

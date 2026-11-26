@@ -1,7 +1,7 @@
 """Phase 6 check: order status (Appendix D #23 to #26 and #32) plus the three deliverables from the plan:
 verified lookup works, a wrong email gives the generic message, the rate limit works.
 
-  python eval_phase6.py ORDER_NUMBER BILLING_EMAIL [CUSTOMER_UUID]
+  python -m evals.eval_phase6 ORDER_NUMBER BILLING_EMAIL [CUSTOMER_UUID]
 
 Use an order from your scrubbed dev copy. In DBeaver (as root, not chatbot_ro):
   SELECT order_number, billing_email, customer_id FROM orders LIMIT 5;

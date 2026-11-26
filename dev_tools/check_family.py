@@ -1,6 +1,6 @@
 """Shows every variant in one product family (name, price, own attributes) so we can see how size is stored.
 Run from the project folder (needs .env; no model quota):
-    python check_family.py "Chime 8 Inch Memory Foam Twin"
+    python -m dev_tools.check_family "Chime 8 Inch Memory Foam Twin"
 """
 import sys
 from dotenv import load_dotenv

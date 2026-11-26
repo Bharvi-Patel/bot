@@ -1,7 +1,7 @@
 """Phase 3 check: the 10 policy (RAG) questions from Appendix D, plus refusal checks, run against the real vector search.
 
-  python eval_phase3.py                      retrieval check: which pages would the bot cite, and how similar are they
-  python eval_phase3.py --answer             also have Claude write the answer from the retrieved text only (needs ANTHROPIC_API_KEY)
+  python -m evals.eval_phase3                      retrieval check: which pages would the bot cite, and how similar are they
+  python -m evals.eval_phase3 --answer             also have Claude write the answer from the retrieved text only (needs ANTHROPIC_API_KEY)
 Set RAG_DB_URL first. The first run loads the embedding model (a few seconds).
 
 Statuses:  PASS    an expected page was retrieved (or, for refusal checks, nothing was retrieved)

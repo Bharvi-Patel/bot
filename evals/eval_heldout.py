@@ -12,8 +12,8 @@ RULES (this is what makes the number honest)
      write a fresh replacement. Never keep re-running the same ones.
   4. The expected answers are read live from your database, so the catalog can change without breaking them.
 
-    python eval_accuracy.py --cases eval_heldout --check-truth      # FIRST, no model: every query must return rows
-    python eval_accuracy.py --cases eval_heldout --runs 3 --max-tokens 500000
+    python -m evals.eval_accuracy --cases eval_heldout --check-truth      # FIRST, no model: every query must return rows
+    python -m evals.eval_accuracy --cases eval_heldout --runs 3 --max-tokens 500000
 
 REVISIONS AFTER THE FIRST RUN (2026-10-15, result 26/34 stable).  Only cases whose EXPECTATION was wrong were changed; no case was
 changed to make the bot pass. The bot-side fixes were made for the problem class, not the case.
@@ -33,7 +33,7 @@ store's real answer differs, fix the EXPECTATION (not the bot) before the first 
 """
 from __future__ import annotations
 
-from eval_cases import BED, C, SOFA, in_category, under  # noqa: F401
+from evals.eval_cases import BED, C, SOFA, in_category, under  # noqa: F401
 
 # ---------- helpers: same shape as eval_cases.py / eval_fresh.py ----------
 

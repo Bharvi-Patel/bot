@@ -1,5 +1,5 @@
 """Shows what search_policies returns for the questions the bot failed on. Run from the project folder:
-    python check_retrieval.py
+    python -m dev_tools.check_retrieval
 Needs .env with RAG_DB_URL (same as the bot). Uses no LLM, so it costs no API quota."""
 from dotenv import load_dotenv
 load_dotenv()

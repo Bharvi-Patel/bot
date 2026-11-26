@@ -1,7 +1,7 @@
 """Prints the cheapest products whose name matches a word, with the categories each one is filed under.
 Run from the project folder (needs .env with the database settings; no model quota):
-    python check_cheapest.py "Dining%Table"          (default)
-    python check_cheapest.py "Desk"
+    python -m dev_tools.check_cheapest "Dining%Table"          (default)
+    python -m dev_tools.check_cheapest "Desk"
 """
 import sys
 from dotenv import load_dotenv

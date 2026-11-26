@@ -1,6 +1,6 @@
 """Read-only report on the RAG index (table rag_chunks). Needs RAG_DB_URL.
 
-Save this file in the repo folder (next to the .env file) and run:   python inspect_index.py
+From the repo folder (where the .env file is) run:   python -m dev_tools.inspect_index
 RAG_DB_URL is read from that .env file, the same way the rest of the bot reads it. If it is not in .env yet, add a line
     RAG_DB_URL=postgresql://user:password@host/dbname?sslmode=require
 (your Neon connection string). Never paste that string into a chat.
@@ -16,7 +16,7 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-load_dotenv(Path(__file__).resolve().parent / ".env")      # the repo's .env, like bot/__init__.py does
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")      # the repo's .env, like bot/__init__.py does
 URL = os.environ.get("RAG_DB_URL")
 if not URL:
     sys.exit("RAG_DB_URL is not set: add it to the .env file in the repo folder (see the top of this file)")

@@ -1,4 +1,4 @@
-"""Look up one product as the bot would.  Usage:  python smoke_details.py SKU
+"""Look up one product as the bot would.  Usage:  python -m dev_tools.smoke_details SKU
 With no SKU it searches for a sectional and uses the first result.
 Set the SJ_DB_* variables first (see .env.example).
 """
