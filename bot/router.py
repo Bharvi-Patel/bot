@@ -12,13 +12,17 @@ import time
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from bot import events, tracing
 from bot.context import ChatContext
-from bot.guardrails import (CONTACT_UNTRUSTED_TOOLS, FALLBACK, SYSTEM_PROMPT, ORDER_CHANGE_REPLY, MAX_TOOL_CALLS_PER_TURN, add_no_info_prefix, declined_without_policy_search, declined_without_product_search, holiday_hours_reply, superlative_search_lacks_keyword, ground_brand_search_ex, BRAND_ONLY_NOTE, repair_unverified_prices, strip_tool_name_links, CHEAPEST_NUDGE, POLICY_NUDGE, is_bare_contact_reply, check_reply, needs_fresh_price_search, required_tool_nudge, is_extraction_attempt, is_order_change_request,
-                              repair_contacts, run_tool, store_contact_text, strip_unknown_links)
-
+from bot.gates import ORDER_CHANGE_REPLY, is_extraction_attempt, is_order_change_request
+from bot.guardrails import CONTACT_UNTRUSTED_TOOLS, FALLBACK, MAX_TOOL_CALLS_PER_TURN, SYSTEM_PROMPT, run_tool, store_contact_text
+from bot.nudges import (BRAND_ONLY_NOTE, CHEAPEST_NUDGE, POLICY_NUDGE, add_no_info_prefix, declined_without_policy_search,
+                        declined_without_product_search, ground_brand_search_ex, holiday_hours_reply, is_bare_contact_reply,
+                        needs_fresh_price_search, required_tool_nudge, superlative_search_lacks_keyword)
 from bot.prompt import extraction_reply, render_system_prompt
+from bot.reply_check import check_reply, repair_contacts, repair_unverified_prices, strip_tool_name_links, strip_unknown_links
 from bot.store_config import StoreNotConfigured
 from bot.stores import UNAVAILABLE_REPLY, config_for
 from bot.tool_schemas import VISITOR_TOOL_DECLARATIONS
@@ -87,6 +91,14 @@ def known_brands(store_uuid: str | None = None) -> list:
     return brands
 
 
+def _first_nudge(nudges: list, used: set[str], text: str) -> tuple[str, str | None, str] | None:
+    """The first nudge not yet used this turn whose check applies: (name, review-log reason, instruction), or None."""
+    for name, review_reason, check in nudges:
+        if name not in used and (instruction := check(text)):
+            return name, review_reason, instruction
+    return None
+
+
 def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,
            ctx=None) -> dict:
     """Returns {"reply": str, "tools_used": [names], "blocked": reason or None}.
@@ -120,14 +132,25 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
     tools_used: list[str] = []
     reply: str | None = None
     reason: str | None = None
-    nudged = False
-    policy_nudged = False
-    tool_nudged = False
-    declined_nudged = False
-    product_retry_nudged = False
-    keyword_nudged = False
     search_calls: list[dict] = []                       # arguments of the product searches that really ran
     seen_calls: dict[str, dict] = {}                    # identical repeat calls in one turn are answered from here and cost nothing
+    # When the model answers without a tool call, these are tried in order and the first that applies sends it back once
+    # with its instruction. Each: (name, review-log reason or None, check(reply) -> instruction or None).
+    nudges: list[tuple[str, str | None, Callable[[str], str | None]]] = [
+        ("fresh_price", None,                            # answering "cheapest" from memory: make it search
+         lambda text: CHEAPEST_NUDGE if needs_fresh_price_search(question, tools_used) else None),
+        ("keyword", "superlative_keyword_retried",       # cheapest-first list with no type word
+         lambda text: superlative_search_lacks_keyword(question, search_calls)),
+        ("required_tool", "required_tool_retried",       # categories / brands / policies / hours from memory
+         lambda text: required_tool_nudge(question, tools_used)),
+        ("policy_first", "declined_without_policy_search_retried",      # "don't have it" without searching the store's pages
+         lambda text: declined_without_policy_search(text, question, tools_used)),
+        ("product_retry", "declined_without_product_search_retried",    # misspelt product word went to the policy search
+         lambda text: declined_without_product_search(text, question, tools_used, results)),
+        ("bare_contact", "bare_contact_reply_retried",   # found the answer, then only gave the phone number
+         lambda text: POLICY_NUDGE if is_bare_contact_reply(text, results, question, tools_used) else None),
+    ]
+    nudges_used: set[str] = set()
 
     tool_decls = None if getattr(ctx, "customer_token", None) else VISITOR_TOOL_DECLARATIONS
 
@@ -139,43 +162,17 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
             reason = "llm_error"
             break
         if not turn.tool_calls:
-            if not nudged and needs_fresh_price_search(question, tools_used):      # answering "cheapest" from memory: make it search
-                nudged = True
-                messages.append({"role": "assistant", "text": turn.text})
-                messages.append({"role": "user", "text": CHEAPEST_NUDGE})
-                continue
-            if not keyword_nudged and (kw := superlative_search_lacks_keyword(question, search_calls)):   # cheapest-first list with no type word
-                keyword_nudged = True
-                log_for_review(question, "superlative_keyword_retried", tools_used)
-                messages.append({"role": "assistant", "text": turn.text})
-                messages.append({"role": "user", "text": kw})
-                continue
-            if not tool_nudged and (must_call := required_tool_nudge(question, tools_used)):   # categories / brands / policies from memory
-                tool_nudged = True
-                log_for_review(question, "required_tool_retried", tools_used)
-                messages.append({"role": "assistant", "text": turn.text})
-                messages.append({"role": "user", "text": must_call})
-                continue
-            if not declined_nudged and (first := declined_without_policy_search(turn.text, question, tools_used)):   # \"don't have it\" without searching
-                declined_nudged = True
-                log_for_review(question, "declined_without_policy_search_retried", tools_used)
-                messages.append({"role": "assistant", "text": turn.text})
-                messages.append({"role": "user", "text": first})
-                continue
-            if not product_retry_nudged and (retry := declined_without_product_search(turn.text, question, tools_used, results)):   # misspelt product word went to the policy search
-                product_retry_nudged = True
-                log_for_review(question, "declined_without_product_search_retried", tools_used)
-                messages.append({"role": "assistant", "text": turn.text})
-                messages.append({"role": "user", "text": retry})
-                continue
-            if not policy_nudged and is_bare_contact_reply(turn.text, results, question, tools_used):   # found the answer, then only gave the phone number
-                policy_nudged = True
-                log_for_review(question, "bare_contact_reply_retried", tools_used)
-                messages.append({"role": "assistant", "text": turn.text})
-                messages.append({"role": "user", "text": POLICY_NUDGE})
-                continue
-            reply = turn.text
-            break
+            nudge = _first_nudge(nudges, nudges_used, turn.text)
+            if nudge is None:
+                reply = turn.text
+                break
+            name, review_reason, instruction = nudge
+            nudges_used.add(name)
+            if review_reason:
+                log_for_review(question, review_reason, tools_used)
+            messages.append({"role": "assistant", "text": turn.text})
+            messages.append({"role": "user", "text": instruction})
+            continue
         messages.append({"role": "assistant", "text": turn.text, "tool_calls": turn.tool_calls, "raw": turn.raw})
         for call in turn.tool_calls:
             call_key = json.dumps([call.name, call.args], sort_keys=True, default=str)
@@ -225,13 +222,17 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
         with tracing.span("reply_check", input=reply) as sp:
             ok, why = check_reply(reply, results, user_said, trusted, contact_results, earlier_replies, cfg.allowed_domains)
             sp.update(output={"ok": ok, "reason": why})
+        repairs: dict[str, Callable[[str], str | None]] = {             # which repair fixes which failed check
+            "unknown_link": lambda r: strip_unknown_links(r, results, question, cfg.allowed_domains),
+            "unverified_price": lambda r: repair_unverified_prices(r, results, user_said, earlier_replies),
+            "internal_leak": strip_tool_name_links,
+            "unknown_email": lambda r: repair_contacts(r, contact_results, trusted),
+            "unknown_phone": lambda r: repair_contacts(r, contact_results, trusted),
+        }
         for _ in range(2):                                             # right answer, bad contact line or link: fix it
-            if ok or why not in ("unknown_email", "unknown_phone", "unknown_link", "unverified_price", "internal_leak"):
+            if ok or why not in repairs:
                 break
-            fixed = (strip_unknown_links(reply, results, question, cfg.allowed_domains) if why == "unknown_link"
-                     else repair_unverified_prices(reply, results, user_said, earlier_replies) if why == "unverified_price"
-                     else strip_tool_name_links(reply) if why == "internal_leak"
-                     else repair_contacts(reply, contact_results, trusted))
+            fixed = repairs[why](reply)
             if not fixed or fixed == reply:
                 break
             log.warning("repaired reply (%s)", why)
