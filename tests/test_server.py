@@ -40,7 +40,7 @@ def client(spy=None, key=KEY, limits=None):
 def test_chat_passes_the_trusted_context_and_returns_only_reply_and_blocked():
     c, spy = client()
     r = c.post("/chat", json={"message": "hello", "history": [{"role": "user", "text": "a"}]}, headers={**GOOD, "X-Customer-Uuid": "cust-9"})
-    assert r.status_code == 200 and r.json() == {"reply": "hi", "blocked": None}      # tools_used is not exposed
+    assert r.status_code == 200 and r.json() == {"reply": "hi", "blocked": None, "products": [], "display": None}      # tools_used is not exposed
     message, llm, history, ctx = spy.calls[0]
     assert (message, llm, history) == ("hello", "LLM", [{"role": "user", "text": "a"}])
     assert (ctx.store_uuid, ctx.client_id, ctx.customer_uuid) == ("store-a", "203.0.113.7", "cust-9")

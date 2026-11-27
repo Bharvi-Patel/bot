@@ -21,6 +21,7 @@ from bot.guardrails import CONTACT_UNTRUSTED_TOOLS, FALLBACK, MAX_TOOL_CALLS_PER
 from bot.nudges import (BRAND_ONLY_NOTE, CHEAPEST_NUDGE, POLICY_NUDGE, add_no_info_prefix, declined_without_policy_search,
                         declined_without_product_search, ground_brand_search_ex, holiday_hours_reply, is_bare_contact_reply,
                         needs_fresh_price_search, required_tool_nudge, superlative_search_lacks_keyword)
+from bot.product_cards import add_store_descriptions, cards_for_reply, split_reply_for_cards, tidy_reply_for_cards
 from bot.prompt import extraction_reply, render_system_prompt
 from bot.reply_check import check_reply, repair_contacts, repair_unverified_prices, strip_tool_name_links, strip_unknown_links
 from bot.store_config import StoreNotConfigured
@@ -250,7 +251,25 @@ def _answer(user_message: str, llm, history: list[dict] | None = None, max_calls
         return {"reply": FALLBACK, "tools_used": tools_used, "blocked": reason, "blocked_reply": blocked_reply}
     if any(isinstance(r, dict) and (r.get("found") is False or r.get("error")) for r in results):
         log_for_review(question, "tool_found_nothing_or_error", tools_used)
-    return {"reply": reply, "tools_used": tools_used, "blocked": None}
+    display = None
+    try:
+        products = cards_for_reply(reply, results)     # cards for the widget; every field comes from this turn's tool results
+        reply = tidy_reply_for_cards(reply, products)    # the cards carry the links and pictures, so the text drops them
+        if products:
+            # The widget shows the intro, then each card with the reply's words about it. `reply` stays whole: it is what
+            # the widget sends back as history, so "the second one" still has the list to refer to.
+            display, products = split_reply_for_cards(reply, products)
+            products = add_store_descriptions(products, lambda slug: _product_details(slug, ctx))
+    except Exception:                                   # a card problem must never cost the customer the answer
+        log.exception("product cards failed")
+        products, display = [], None
+    return {"reply": reply, "tools_used": tools_used, "blocked": None, "products": products, "display": display}
+
+
+def _product_details(slug: str, ctx) -> dict:
+    """One product's details for a card's description: the same tool the model uses, for this chat's store."""
+    from bot.tools.get_product_details import get_product_details
+    return get_product_details({"slug": slug}, ctx=ctx, with_categories=False)
 
 
 def answer(user_message: str, llm, history: list[dict] | None = None, max_calls: int = MAX_TOOL_CALLS_PER_TURN,

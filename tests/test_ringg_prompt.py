@@ -63,7 +63,7 @@ def test_default_shared_prompt_uses_store_name_variable_without_south_jackson():
 
 def _link_words(text):
     import re
-    return re.findall(r"plain URLs|link the product|link it only|image links", text)
+    return re.findall(r"plain URLs|link the product|link it only|image links|image URLs|page link", text)
 
 
 @pytest.mark.parametrize("vertical", ["general", "furniture", "electronics", "veterinary", "tires_wheels"])
@@ -74,7 +74,7 @@ def test_voice_prompt_never_tells_the_agent_to_give_links_but_text_does(vertical
     assert "say it is on the website" in voice                 # the replacement for the image-link rule
     assert "Keep answers short" not in voice                   # the voice rules already ask for short answers
     text = ringg_prompt(channel="text", vertical=vertical)
-    assert sorted(_link_words(text)) == ["image links", "link it only", "link the product", "plain URLs"]
+    assert sorted(_link_words(text)) == ["image URLs", "link it only", "page link", "page link", "page link"]   # products link through their cards
 
 
 def test_voice_link_change_applies_to_a_specific_store_too():
@@ -84,7 +84,7 @@ def test_voice_link_change_applies_to_a_specific_store_too():
 
 def test_voice_refuses_to_build_if_a_link_rule_changed_in_the_shared_prompt(monkeypatch):
     import bot.ringg_prompt as rp
-    monkeypatch.setattr(rp, "render_system_prompt", lambda cfg: render_system_prompt(cfg).replace("link the product or policy page", "share the page"))
+    monkeypatch.setattr(rp, "render_system_prompt", lambda cfg: render_system_prompt(cfg).replace("link only policy or information pages", "share the page"))
     with pytest.raises(RuntimeError):
         rp.ringg_prompt(SOUTH_JACKSON, "voice")
     assert "Chat style" in rp.ringg_prompt(SOUTH_JACKSON, "text")      # the text channel does not depend on the voice rewording
