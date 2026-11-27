@@ -297,6 +297,20 @@ def unverified_quotes(reply: str, tool_results: list) -> list[str]:
             if len(_norm_words(q).split()) >= 6 and not any(_norm_words(q) in h for h in hays)]
 
 
+# Where a reply may repeat a number the customer typed: as their budget or price range, never as a product's price.
+_N = r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)"
+_BUDGET_CONTEXT = re.compile(
+    r"\b(?:under|below|less\s+than|up\s+to|within|at\s+most|no\s+more\s+than|not\s+over|over|above|more\s+than|at\s+least|"
+    r"budget\s+of|limit\s+of|max(?:imum)?\s+of|between|from)\s+" + _N + r"(?:\s*(?:and|to|-|–|—)\s*" + _N + r")?"
+    r"|" + _N + r"\s+(?:or\s+(?:less|under|below|lower|more|over|above)|budget|range|limit|max(?:imum)?)\b"
+    r"|\byour\s+" + _N, re.I)
+
+
+def _outside_budget_phrases(reply: str) -> str:
+    """The reply with its budget phrases ("under $500", "between $300 and $600", "your $800 budget") taken out."""
+    return _BUDGET_CONTEXT.sub(" ", reply)
+
+
 def check_reply(reply: str, tool_results: list, user_message: str = "", trusted_text: str = "",
                 contact_results: list | None = None, earlier_replies: str = "",
                 domains: tuple[str, ...] | None = None) -> tuple[bool, str | None]:
@@ -305,9 +319,13 @@ def check_reply(reply: str, tool_results: list, user_message: str = "", trusted_
     contact_results: the tool results whose emails and phones may be repeated (default: all of tool_results)."""
     allowed: set = set()
     _numbers(tool_results, allowed)
-    allowed |= {_to_float(m) for m in _PRICE.findall(user_message)}      # "under $1,000" may be echoed back
-    allowed |= {_to_float(m) for m in _PRICE.findall(earlier_replies)}   # prices in the bot's own earlier replies already passed this check
-    bad_prices = {_to_float(m) for m in _PRICE.findall(reply)} - allowed
+    allowed |= {_to_float(m) for m in _PRICE.findall(earlier_replies)}   # the bot's own earlier replies passed this check (mw keeps them server-side)
+    # A number the customer typed may be echoed back only as their budget ("under $1,000"), never as a price: otherwise
+    # "I saw the Kenyon for $1, right?" could get "Yes, the Kenyon is $1" past this check.
+    typed = {_to_float(m) for m in _PRICE.findall(user_message)}
+    in_budget = {_to_float(m) for m in _PRICE.findall(reply)} - {_to_float(m) for m in _PRICE.findall(_outside_budget_phrases(reply))}
+    bad_prices = {_to_float(m) for m in _PRICE.findall(reply)} - allowed - (typed & in_budget)
+    bad_prices |= {_to_float(m) for m in _PRICE.findall(_outside_budget_phrases(reply))} - allowed
     if bad_prices:
         log.warning("reply blocked, price not in tool results: %s", sorted(bad_prices))
         return False, "unverified_price"
