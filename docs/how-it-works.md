@@ -139,6 +139,10 @@ sequenceDiagram
 ### A2. In `mw` (`mw/app/Http/Controllers/ChatController.php`)
 1. Refuses with "unavailable" if chat is switched off (`BOT_CHAT_ENABLED`) or the bot address/key/store is not configured.
 2. Validates the body: only `message` (1–1,000 chars) and `history` (≤ 10 items of `{role: user|assistant, text}`).
+   The browser's `history` is checked for shape and then **ignored**: it lives in sessionStorage, so anyone can edit
+   it, and the bot treats prices in earlier assistant turns as already verified. The history sent to the bot is the
+   one `mw` saved in the customer's session (`chat_history_<store>`: the current conversation id and its last 10
+   entries, the bot's whole `reply` each time). A new conversation id starts empty; with no session, no history is sent.
 3. Builds the **trusted headers**:
    - `X-Bot-Key`: the shared service key (`BOT_SERVICE_KEY`).
    - `Store-UUID`: the storefront's own store.
