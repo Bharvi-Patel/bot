@@ -88,7 +88,7 @@ def test_the_create_request_follows_the_documented_limits_and_the_prompt_is_set_
     assert len(c["introduction_and_objective"]) <= 2000 and len(c["response_guidelines"]) <= 3000 and len(c["task"]) <= 1500
     assert c["agent_type"] == "inbound" and c["custom_variables"] == ["store_uuid", "store_name", "conversation_id"]
     ops = [body["operation"] for _, body in built["steps"]]
-    assert ops == ["edit_prompt", "edit_agent_whitelisted_domains", "edit_event_subscriptions"]
+    assert ops == ["edit_prompt", "edit_agent_whitelisted_domains", "edit_event_subscriptions", "edit_vocab"]
     prompt = built["steps"][0][1]["agent_prompt"]
     assert prompt == built["prompt"] and prompt.count("{{store_name}}") == 1 and "@store_name" not in prompt
     assert "get_order_status" not in prompt
@@ -139,10 +139,10 @@ def test_create_with_yes_makes_one_agent_then_sets_the_rest_and_never_prints_the
     code, out = run(["create", write_spec(tmp_path), "--yes"], send=fake)
     assert code == 0
     assert [(m, p) for m, p, _, _ in fake.calls] == [("GET", "/agent/all"), ("POST", "/public/agent/"), ("PATCH", "/agent/v1"),
-                                                      ("PATCH", "/agent/v1"), ("PATCH", "/agent/v1")]
+                                                      ("PATCH", "/agent/v1"), ("PATCH", "/agent/v1"), ("PATCH", "/agent/v1")]
     assert all(h["X-API-KEY"] == KEY for _, _, h, _ in fake.calls)
     assert [b["operation"] for m, _, _, b in fake.calls if m == "PATCH"] == ["edit_prompt", "edit_agent_whitelisted_domains",
-                                                                              "edit_event_subscriptions"]
+                                                                              "edit_event_subscriptions", "edit_vocab"]
     assert all(b["agent_id"] == "new-agent-id-1234" for m, _, _, b in fake.calls if m == "PATCH")
     assert KEY not in out and SECRET not in out
     assert '"new-agent-id-1234": "*"' in out and "tools" in out
@@ -248,3 +248,30 @@ def test_the_tool_checklist_covers_the_voice_tools_and_never_makes_the_store_dyn
 def test_the_bot_service_never_imports_the_setup_script():
     for path in (Path(__file__).resolve().parent.parent / "bot").rglob("*.py"):
         assert "ringg_setup" not in path.read_text(encoding="utf-8"), path
+
+
+
+def test_the_prompt_create_sends_names_every_voice_tool_the_way_ringg_needs():
+    from bot.ringg import VOICE_TOOLS
+    from dev_tools.ringg_setup import build_prompt
+    text = build_prompt({"vertical": "furniture"})
+    assert all(f"@||{t}||" in text for t in VOICE_TOOLS)
+
+
+
+def test_vocab_is_sent_by_create_and_checked_against_ringgs_limit():
+    import json, pytest
+    from dev_tools.ringg_setup import SetupError, build_requests, load_spec, MAX_VOCAB_WORDS
+    spec = load_spec("dev_tools/ringg_agents/b3-dev.json")
+    assert "cushions" in spec["vocab"] and sum(len(w.split()) for w in spec["vocab"]) <= MAX_VOCAB_WORDS
+    env = {"BOT_PUBLIC_URL": "https://bot.example", "RINGG_WEBHOOK_SECRET": "s"}
+    steps = dict(build_requests(spec, env)["steps"])
+    assert steps["set the speech keywords"] == {"operation": "edit_vocab", "vocab": spec["vocab"]}
+
+
+def test_vocab_command_is_a_dry_run_without_yes(tmp_path):
+    from dev_tools.ringg_setup import main
+    sent, out = [], []
+    rc = main(["vocab", "dev_tools/ringg_agents/b3-dev.json", "agent-1234abcd"], env={},
+              out=out.append, send=lambda *a: sent.append(a) or (200, b"{}"))
+    assert rc == 0 and sent == [] and any("Dry run" in l for l in out)

@@ -5,6 +5,7 @@
     python -m dev_tools.ringg_setup plan   dev_tools/ringg_agents/b3-dev.json [--stores-dir stores]    what create would send (offline)
     python -m dev_tools.ringg_setup create dev_tools/ringg_agents/b3-dev.json [--stores-dir stores] [--yes]
     python -m dev_tools.ringg_setup show   <agent id>            a safe summary of an agent (read-only)
+    python -m dev_tools.ringg_setup vocab  dev_tools/ringg_agents/b3-dev.json <agent id> [--yes]   set its speech keywords
 
 `create` is a dry run unless --yes is given. With --yes it creates ONE agent: POST /public/agent (a short placeholder prompt),
 then PATCH /agent/v1 to set the full voice prompt, the website domains and the webhook subscription. The agent's tools are not
@@ -41,7 +42,8 @@ EVENTS = ("call_started", "call_ringing", "call_ongoing", "call_completed", "cha
           "platform_analysis_completed", "client_analysis_completed", "all_processing_completed")
 METHODS = ("GET", "POST", "PUT", "PATCH")
 _SPEC_KEYS = {"agent_name", "vertical", "agent_type", "primary_language", "voice_id", "intro_message", "custom_variables",
-              "call_config", "whitelisted_domains", "event_subscriptions"}
+              "call_config", "whitelisted_domains", "event_subscriptions", "vocab"}
+MAX_VOCAB_WORDS = 100      # Ringg's Keyword Boosting limit: 100 words in total across the list (edit_vocab replaces the list)
 _VAR = re.compile(r"[a-z][a-z0-9_]{0,40}")
 _HOST = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}")
 _ENV_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
@@ -108,6 +110,10 @@ def check_spec(spec: Any) -> dict[str, Any]:
     domains = spec.get("whitelisted_domains", [RINGG_DOMAIN])
     if not isinstance(domains, list) or RINGG_DOMAIN not in domains or not all(_is_origin(d) for d in domains):
         raise SetupError(f"whitelisted_domains must be https:// addresses and must keep {RINGG_DOMAIN}")
+    vocab = spec.get("vocab", [])
+    if (not isinstance(vocab, list) or not all(isinstance(w, str) and 0 < len(w.strip()) <= 60 for w in vocab)
+            or sum(len(w.split()) for w in vocab) > MAX_VOCAB_WORDS):
+        raise SetupError(f"vocab must be a list of words or short phrases, at most {MAX_VOCAB_WORDS} words in total")
     subs = spec.get("event_subscriptions", [])
     if not isinstance(subs, list):
         raise SetupError("event_subscriptions must be a list")
@@ -163,7 +169,7 @@ def expand_env(value: Any, env: dict[str, str], missing: list[str]) -> Any:
 
 def build_prompt(spec: dict[str, Any]) -> str:
     from bot.ringg_prompt import ringg_prompt
-    return ringg_prompt(channel="voice", vertical=spec["vertical"])
+    return ringg_prompt(channel="voice", vertical=spec["vertical"], tool_mentions=True)   # Ringg offers a tool only where the prompt says @||name||
 
 
 def build_requests(spec: dict[str, Any], env: dict[str, str], stores_dir: str | None = None) -> dict[str, Any]:
@@ -196,6 +202,8 @@ def build_requests(spec: dict[str, Any], env: dict[str, str], stores_dir: str | 
              ("set the website domains", {"operation": "edit_agent_whitelisted_domains", "whitelisted_domains": domains})]
     if subs:
         steps.append(("set the webhook subscription", {"operation": "edit_event_subscriptions", "event_subscriptions": subs}))
+    if spec.get("vocab"):
+        steps.append(("set the speech keywords", vocab_body(spec)))
     if missing:
         problems.append("not set in the environment: " + ", ".join(sorted(set(missing))))
     for sub in subs:
@@ -356,6 +364,30 @@ def cmd_create(client: Client, spec: dict[str, Any], env: dict[str, str], stores
     return agent_id
 
 
+def vocab_body(spec: dict[str, Any]) -> dict[str, Any]:
+    """Keyword Boosting: words the speech recogniser should listen for, so "cushions" is not heard as "questions"."""
+    return {"operation": "edit_vocab", "vocab": [w.strip() for w in spec.get("vocab", [])]}
+
+
+def cmd_vocab(client: Client, spec: dict[str, Any], agent_id: str, yes: bool, out: Callable[[str], None]) -> None:
+    """Set an existing agent's speech keywords from the spec. The list REPLACES the agent's current one."""
+    if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", agent_id):
+        raise SetupError("that does not look like an agent id")
+    body = vocab_body(spec)
+    if not body["vocab"]:
+        raise SetupError("the spec has no vocab list")
+    out(f"PATCH /agent/v1   (set the speech keywords: {len(body['vocab'])} entries, "
+        f"{sum(len(w.split()) for w in body['vocab'])} of {MAX_VOCAB_WORDS} words; replaces the agent's current list)")
+    out("  " + ", ".join(body["vocab"]))
+    if not yes:
+        out("Dry run: nothing was sent. Add --yes to set them.")
+        return
+    status, data = client.request("PATCH", "/agent/v1", {"agent_id": agent_id, **body})
+    if status != 200:
+        raise _fail("setting the speech keywords", status, data)
+    out("Done: speech keywords set. Check the next call's transcript in Ringg's Logs.")
+
+
 def summarize_agent(data: dict[str, Any]) -> list[str]:
     """A summary of GET /agent/{id} that never prints secrets: header values and tool settings are left out."""
     agent = data.get("agents") or {}
@@ -393,7 +425,10 @@ def cmd_show(client: Client, agent_id: str, out: Callable[[str], None]) -> None:
 
 def main(argv: list[str] | None = None, env: dict[str, str] | None = None, out: Callable[[str], None] = print,
          send: Sender = _urllib_send) -> int:
-    env = dict(os.environ) if env is None else env
+    if env is None:
+        from dotenv import load_dotenv           # the repo's .env (RINGG_API_KEY, BOT_PUBLIC_URL...); values already set win
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+        env = dict(os.environ)
     ap = argparse.ArgumentParser(prog="ringg_setup", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("voices"); p.add_argument("--language")
@@ -403,6 +438,7 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None, out: 
         if name == "create":
             p.add_argument("--yes", action="store_true"); p.add_argument("--allow-duplicate", action="store_true")
     p = sub.add_parser("show"); p.add_argument("agent_id")
+    p = sub.add_parser("vocab"); p.add_argument("spec"); p.add_argument("agent_id"); p.add_argument("--yes", action="store_true")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "tools":
@@ -415,6 +451,9 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None, out: 
             cmd_voices(Client(env.get(KEY_ENV, ""), send), args.language, out)
         elif args.cmd == "show":
             cmd_show(Client(env.get(KEY_ENV, ""), send), args.agent_id, out)
+        elif args.cmd == "vocab":
+            cmd_vocab(Client(env.get(KEY_ENV, ""), send) if args.yes else Client("dry-run", send), load_spec(args.spec),
+                      args.agent_id, args.yes, out)
         elif args.cmd == "create":
             cmd_create(Client(env.get(KEY_ENV, ""), send) if args.yes else Client("dry-run", send), load_spec(args.spec), env,
                        args.stores_dir, args.yes, out, args.allow_duplicate)
