@@ -152,3 +152,27 @@ def test_p_slug_route_is_recognised_for_live_checks(monkeypatch):
     out = recommend_products({"query": "sofa"}, run_query=runner([row]), embed_query=emb)
     assert out["count"] == 1 and asked == [{"slug": "rainn-sofa-set-latte"}]
 
+
+
+def test_a_guessed_slug_that_matches_nothing_is_dropped_and_the_search_retried():
+    seen = []
+    def run(sql, params):
+        seen.append(sql)
+        if "brand_slug = %s" in sql or "ANY(category_slugs)" in sql: return []
+        return [doc(1, 0.8)] if "ORDER BY embedding" in sql else []
+    out = recommend_products({"query": "mattress good for back", "category_slug": "mattresses", "brand_slug": "sealy", "max_price": 900},
+                             run_query=run, embed_query=emb, confirm=live({"SKU1": 499.0}))
+    assert out["found"] is True and out["filters_dropped"] == ["brand_slug", "category_slug"]
+    assert "do not say they are from that brand or category" in out["note"]
+    assert "price <= %s" in seen[-1] and "brand_slug" not in seen[-1].split("FROM")[1]
+
+
+def test_a_slug_that_matches_is_not_dropped():
+    out = recommend_products({"query": "desk", "brand_slug": "b"}, run_query=runner([doc(1, 0.8)]), embed_query=emb, confirm=live({"SKU1": 100.0}))
+    assert "filters_dropped" not in out
+
+
+
+def test_each_product_carries_its_category_so_the_model_can_leave_out_the_wrong_type():
+    out = recommend_products({"query": "mattress"}, run_query=runner([doc(1, 0.8)]), embed_query=emb, confirm=live({"SKU1": 100.0}))
+    assert out["products"][0]["category"] == "Sofas" and "is not a mattress" in out["note"]
