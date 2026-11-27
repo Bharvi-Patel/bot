@@ -180,12 +180,42 @@ def _passes_keyword(name: str, words: list[str]) -> bool:
     return all(_stem(w) in low for w in words)
 
 
+def _has_words(text: str, words: list[str]) -> bool:
+    """Every word, as a whole word of the text (plurals and two-word spellings count: "Night Stand" for "nightstand")."""
+    tokens = [_stem(t) for t in re.findall(r"[a-z0-9]+", text.lower())]
+    have = set(tokens) | {_stem(a + b) for a, b in zip(tokens, tokens[1:])}
+    return all(_stem(w) in have for w in words)
+
+
+def _is_a(p: dict[str, Any], words: list[str]) -> bool | None:
+    """Is this product the thing the keyword names? The store's search also matches descriptions and loose tags, so
+    "cushion" returns a dining set tagged "foam cushions" and chairs tagged "cushion chair", and "rug" returns vanities in
+    the "Rugs and Decor" group. A product counts when the words are in its NAME, or in the catalog's own type tag: the tag
+    that starts with the product's name and ends with the type ("alzir nightstand", "elnath bench").
+    None when the product has no tags and its name does not say: there is nothing to judge by, so it is kept."""
+    name = p.get("name") or ""
+    if _has_words(name, words):
+        return True
+    tags = p.get("tags") or ""
+    if not isinstance(tags, str) or not tags.strip():
+        return None
+    first = re.findall(r"[a-z0-9]+", name.lower())[:1]
+    for tag in tags.split(","):
+        t = re.findall(r"[a-z0-9]+", tag.lower())
+        if first and t[:1] == first and len(t) > len(words) and _has_words(" ".join(t[-len(words) - 1:]), words)                 and _stem(t[-1]) in {_stem(words[-1]), _stem("".join(words[-2:]))}:
+            return True
+    return False
+
+
 def _is_component(name: str) -> bool:
     return any(p.search(name or "") for p in COMPONENT_NAME_PATTERNS)
 
 
+TYPE_GIVE_UP_PAGES = 2   # a keyword search whose first pages hold nothing of that type stops there (each page is ~3-4 s)
+
+
 def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bool, base_ok, price_ok,
-           api_filters: dict[str, Any] | None = None) -> dict[str, Any]:
+           api_filters: dict[str, Any] | None = None, give_up=None) -> dict[str, Any]:
     """Page through the API. Returns the items that pass every filter ("kept"), the ones that pass every filter except
     price ("base_kept"), how many products were checked, the API's total and whether every page was read. Stops early
     once enough matches exist, unless the whole list is needed."""
@@ -210,6 +240,8 @@ def _fetch(client: ApiClient, v: dict[str, Any], query: str | None, need_all: bo
                     kept.append(p)
         if pages >= last_page or (not need_all and len(kept) >= MAX_RESULTS):
             break
+        if give_up is not None and give_up() and pages >= TYPE_GIVE_UP_PAGES:
+            break                      # the search ranks real matches first: two pages of only "cushioned bench" means none
     complete = last_page is not None and pages >= last_page
     return {"kept": kept, "base_kept": base_kept, "varies": varies, "checked": checked, "total": total, "complete": complete}
 
@@ -292,6 +324,12 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
 
         lo, hi, sort = v["min_price"], v["max_price"], v["sort"]
         words = keyword.split()[:5] if (keyword and v["category_slug"]) else []   # a category listing has no keyword filter
+        # A plain keyword search is checked for the product type. Not with a category (the category is the type) and not
+        # with an attribute filter (the store's own Bed Size / Color filter already decides which products match).
+        type_words = ([w for w in keyword.split()[:5] if len(w) > 2]
+                      if (keyword and not v["category_slug"] and not v["attribute"]) else [])
+        not_the_type = [0]                                 # matched only in their description ("cushioned bench" for cushion)
+        of_the_type = [0]
         hide_parts = _hide_components_for(ctx) and v["category_slug"] != COMPONENT_CATEGORY
         wanted_brand = _squash(brand_name) if brand_name else None
         price_filtered = lo is not None or hi is not None
@@ -301,6 +339,11 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
                 return False
             if words and not _passes_keyword(p.get("name") or "", words):
                 return False
+            if type_words:
+                if _is_a(p, type_words) is False:
+                    not_the_type[0] += 1
+                    return False
+                of_the_type[0] += 1
             if wanted_brand and _squash(p.get("brand") or "") != wanted_brand:
                 return False
             return True
@@ -338,7 +381,8 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
             attribute = {"group": resolved["group"], "value": resolved["value"]}
 
         need_all = sort in ("price_asc", "price_desc")
-        fetched = _fetch(client, v, query, need_all, base_filter, price_ok, api_filters)
+        give_up = (lambda: of_the_type[0] == 0) if type_words else None      # nothing of the type at all, not just a filter
+        fetched = _fetch(client, v, query, need_all, base_filter, price_ok, api_filters, give_up=give_up)
         window = None
         if need_all and not fetched["complete"]:
             return {
@@ -423,6 +467,11 @@ def search_products(args: dict[str, Any], client: ApiClient | None = None, ctx=N
         if keyword and not v["category_slug"]:
             result["note"] += (" Before saying we have none, look up the type with list_categories and search its category_slug "
                                "(with the same price limit); a keyword only matches words in product names.")
+        if type_words and not_the_type[0]:
+            result["not_this_type"] = not_the_type[0]
+            result["note"] = (f"No product is a {keyword}: the {not_the_type[0]} products the search found only mention the word in "
+                              f"their description (for example a cushioned bench). Tell the customer plainly that we don't seem to "
+                              f"carry {keyword}. Do not list those products as {keyword}. You may offer to look for something related.")
         if hi is not None and fetched["complete"]:
             near = sorted((p for p in fetched["base_kept"] if p.get("price") is not None and p["price"] > hi),
                           key=lambda p: p["price"])[:3]
