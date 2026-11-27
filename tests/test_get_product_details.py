@@ -105,8 +105,8 @@ def test_found_by_slug_real_response():
     assert (p["sku"], p["name"], p["brand"], p["price"]) == ("2261BRN-S", "Blanche Side Chair Brown", "Crownmark", 439.99)
     assert p["summary"] == "Blanche Side Chair Brown" and p["description"].startswith("Bring the coordinated style")
     assert p["is_variant"] is False and p["pieces"] == 1
-    assert p["main_image"] == "https://cdn.b3c2.com/south-jackson/images/product/2261BRN.webp"
-    assert out["images"] == [{"image_url": "https://cdn.b3c2.com/south-jackson/images/product/2261BRN.webp"}]
+    assert p["main_image"] == "https://cdn.b3c2.com/crownmark/images/product/medium/2261BRN.webp"     # the vendor's folder, as the storefront uses
+    assert out["images"] == [{"image_url": "https://cdn.b3c2.com/crownmark/images/product/large/2261BRN.webp"}]   # the big size for picture links
     assert out["categories"] == ["Dining Room > Dining Furniture > Dining Room Chairs"]
     assert urls[0] == f"http://x/product/{DETAIL_SLUG}"
     assert "base_price" not in json.dumps(out) and "200" not in json.dumps(out["product"]["price"])
@@ -123,9 +123,9 @@ def test_all_zero_dimensions_say_so():
     assert p["dimensions"] is None and "do not estimate" in p["dimension_note"]
 
 
-def test_no_cdn_folder_means_no_image_links():
+def test_without_bot_cdn_folder_the_vendor_folder_still_gives_image_links():
     out = get_product_details({"slug": DETAIL_SLUG}, client=api(cdn_folder=None)[0])
-    assert out["product"]["main_image"] is None and out["images"] == []
+    assert out["product"]["main_image"] == "https://cdn.b3c2.com/crownmark/images/product/medium/2261BRN.webp"
 
 
 def test_category_tree_down_falls_back_to_titles():

@@ -23,6 +23,7 @@ from typing import Any, Callable
 from bot.store_config import valid_store_id
 
 CDN_PLACEHOLDER = "cdn_folder"
+_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,100}")
 
 
 class ApiError(Exception):
@@ -210,17 +211,20 @@ class ApiClient:
 
     # -- images --
 
-    def image_url(self, base: str | None, file_name: str | None) -> str | None:
+    def image_url(self, base: str | None, file_name: str | None, folder: str | None = None, size: str = "medium") -> str | None:
         """Join an API image base path and a file name. The API's base paths contain a literal
-        "cdn_folder"; it is replaced with the store's real folder. If no folder is configured and the
-        placeholder is still there, return None rather than a broken link."""
+        "cdn_folder"; it is replaced with the product's own folder (its brand's vendor folder_name, as the
+        storefront does), else BOT_CDN_FOLDER. With neither, return None rather than a broken link.
+        The CDN keeps each picture in size folders (small, medium, large) and has nothing at the bare path, so the size
+        folder is always added, as the storefront does ("<base>/medium/<file>")."""
         if not base or not file_name:
             return None
-        if self.config.cdn_folder:
-            base = base.replace(f"/{CDN_PLACEHOLDER}/", f"/{self.config.cdn_folder}/")
-        if f"/{CDN_PLACEHOLDER}/" in base and not self.config.cdn_folder:
+        folder = folder or self.config.cdn_folder
+        if folder:
+            base = base.replace(f"/{CDN_PLACEHOLDER}/", f"/{folder}/")
+        if f"/{CDN_PLACEHOLDER}/" in base:
             return None
-        return base.rstrip("/") + "/" + file_name.lstrip("/")
+        return base.rstrip("/") + "/" + size + "/" + file_name.lstrip("/")
 
     # -- endpoints --
 
@@ -549,6 +553,15 @@ class ApiClient:
             return None
         return {"option": " / ".join(str(x) for x in labels if x) or None, "price": price}
 
+    @staticmethod
+    def _image_folder(p: dict[str, Any]) -> str | None:
+        """The product's image folder: brand.vendor.folder_name, the same value the storefront puts in place of
+        "cdn_folder". Only a plain folder name is used, never anything with a slash or a dot-dot."""
+        brand = p.get("brand") if isinstance(p.get("brand"), dict) else {}
+        vendor = brand.get("vendor") if isinstance(brand.get("vendor"), dict) else {}
+        name = vendor.get("folder_name")
+        return name if isinstance(name, str) and _FOLDER.fullmatch(name) else None
+
     def _listing_item(self, p: dict[str, Any], image_base: str | None) -> dict[str, Any]:
         lang = _first_language(p.get("product_languages"))
         brand = p.get("brand") if isinstance(p.get("brand"), dict) else {}
@@ -565,7 +578,7 @@ class ApiClient:
             # not chosen by the attribute filter (a Queen filter showed a Twin) and not known to be the cheapest, so it
             # is only "this size costs this", never a "from" price and never the price of the size that was asked for.
             "shown_option": self._shown_option(p),
-            "image_url": self.image_url(image_base, p.get("main_image")),
+            "image_url": self.image_url(image_base, p.get("main_image"), self._image_folder(p)),
             "tags": lang.get("tags") or "",
         }
 
@@ -589,7 +602,8 @@ class ApiClient:
             categories.append({"slug": cat.get("slug"), "name": _first_language(cat.get("category_languages")).get("title")})
 
         base = data.get("imagePath")
-        images = [self.image_url(base, i.get("image_url")) for i in p.get("product_images") or [] if isinstance(i, dict)]
+        folder = self._image_folder(p)
+        images = [self.image_url(base, i.get("image_url"), folder, "large") for i in p.get("product_images") or [] if isinstance(i, dict)]
 
         # Options (sizes, colors...) of a product whose price depends on them. groupedAttributes lists each option
         # value as {"id": "<attribute uuid>:<variation uuid>", "title": ...} under its group, which says which
@@ -614,7 +628,7 @@ class ApiClient:
             "short_description": lang.get("short_description") or None,
             "description": lang.get("full_description") or None,
             "special_features": lang.get("special_features") or None,
-            "main_image": self.image_url(base, p.get("main_image")),
+            "main_image": self.image_url(base, p.get("main_image"), folder),
             "images": [u for u in images if u],
             "dimensions": {k: to_number(p.get(k)) for k in ("height", "width", "length", "depth", "weight")},
             "pieces": p.get("pieces"),
