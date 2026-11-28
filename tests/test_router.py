@@ -38,7 +38,7 @@ def say(text):
 def test_tool_then_answer(monkeypatch):
     monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
     out = router.answer("what's your number?", FakeLLM(call("get_store_info"), say("Call us on 555-0100.")))
-    assert out == {"reply": "Call us on 555-0100.", "tools_used": ["get_store_info"], "blocked": None}
+    assert out == {"reply": "Call us on 555-0100.", "tools_used": ["get_store_info"], "blocked": None, "products": [], "display": None}
 
 
 def test_invented_price_is_blocked_and_logged(monkeypatch, tmp_path):

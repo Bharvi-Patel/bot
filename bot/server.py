@@ -12,7 +12,11 @@ POST /chat
                      store API for order questions; the API decides which orders are theirs. It is never logged or shown.
   Body (JSON, nothing else is accepted):
     {"message": "...", "history": [{"role": "user" | "assistant", "text": "..."}]}
-  Reply: {"reply": "...", "blocked": null | "<reason>"}
+  Reply: {"reply": "...", "blocked": null | "<reason>", "products": [<card>, ...]}
+    products: cards for the products the reply names (image, name, price, link to /p/<slug>, note = a short
+    description), for the widget to draw; see bot/product_cards.py for the card fields. Empty when the reply names no product.
+    display: when there are cards, the reply without its product lines (those became the cards' notes). The widget
+    shows display, then the cards, and keeps `reply` as the history it sends back. null when there are no cards.
 
 Limits (in-process, so run ONE worker; see bot/service_limits.py): BOT_RATE_PER_CLIENT (default 20 chats a minute for one
 X-Client-Id in one store), BOT_RATE_PER_STORE (default 300 a minute), BOT_MAX_CONCURRENT (default 8 chats at once) and
@@ -102,9 +106,23 @@ class ChatRequest(BaseModel):
     history: list[HistoryItem] = Field(default_factory=list, max_length=MAX_HISTORY)
 
 
+class ProductCard(BaseModel):
+    sku: str | None = None
+    slug: str
+    name: str
+    brand: str | None = None
+    url: str
+    image: str | None = None
+    price: float | None = None
+    price_from: float | None = None
+    note: str | None = None
+
+
 class ChatResponse(BaseModel):
     reply: str
     blocked: str | None = None
+    products: list[ProductCard] = Field(default_factory=list)
+    display: str | None = None
 
 
 @dataclass(frozen=True)
@@ -346,7 +364,8 @@ def create_app(answer_fn: Callable[..., dict] | None = None, llm_factory: Callab
                 _emit_event(request, ctx, outcome, blocked_reason, started, tool_events)
         request.state.blocked = out.get("blocked")
         request.state.tools = out.get("tools_used")
-        return ChatResponse(reply=out["reply"], blocked=out.get("blocked"))
+        return ChatResponse(reply=out["reply"], blocked=out.get("blocked"), products=out.get("products") or [],
+                            display=out.get("display"))
 
     def _emit_event(request: Request, ctx: ChatContext, outcome: str, blocked_reason: Any, started: float, tool_events: list) -> None:
         try:

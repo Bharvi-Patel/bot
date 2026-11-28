@@ -296,7 +296,7 @@ def test_a_repeated_identical_call_is_not_counted_twice(monkeypatch, quiet_route
 def test_the_router_output_is_unchanged_by_the_hook(monkeypatch, quiet_router):
     monkeypatch.setitem(g.TOOLS, "get_store_info", lambda a, ctx=None: {"phone": "555-0100", "email": "info@store.com"})
     out = router.answer("what's your number?", FakeLLM(LLMTurn(tool_calls=[ToolCall("get_store_info", {})]), LLMTurn(text="Call us on 555-0100.")))
-    assert out == {"reply": "Call us on 555-0100.", "tools_used": ["get_store_info"], "blocked": None}
+    assert out == {"reply": "Call us on 555-0100.", "tools_used": ["get_store_info"], "blocked": None, "products": [], "display": None}
 
 
 # ---------- the service writes one event per turn ----------

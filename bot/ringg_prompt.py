@@ -43,8 +43,11 @@ VOICE_RULES = """Speaking rules (this is a phone or browser voice call):
 # (old text, voice text); every old text must be found exactly once, otherwise bot/prompt.py changed and this must be updated.
 _VOICE_LINK_EDITS = (
     (", and link it only with a URL a tool returned.", "."),
-    ("and give image links from the result as plain URLs.", "and describe the item from the result. If they want a picture, say it is on the website."),
-    ("\n- Keep answers short and link the product or policy page.", ""),
+    ("and name the product in your reply; its picture and page link are shown on its product card.", "and describe the item from the result. If they want a picture, say it is on the website."),
+    ("\n- Keep answers short. Every product you name is shown to the customer as a card with its picture, price and page "
+     "link, so never write product page links or image URLs in your reply; link only policy or information pages. When you list "
+     "products, give each one its own line with the name and the price. Add a short description only from a description, summary "
+     "or features the tool returned; never describe a product from its name alone.", ""),
     # the speaking rules say to read at most three products, so the shared "list up to 5" would clash on a phone call
     ("list up to 5 of the results", "read out up to 3 of the results"),
 )

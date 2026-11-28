@@ -8,9 +8,15 @@ from __future__ import annotations
 import os
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Sequence
 
 import mysql.connector
+from dotenv import load_dotenv
+
+# The repo's .env is otherwise loaded only when the bot package is imported, which `eval_accuracy --check-truth` never does,
+# so SJ_DB_USER was missing there however .env was filled in. Values already in the environment win.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def get_connection():

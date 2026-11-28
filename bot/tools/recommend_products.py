@@ -28,7 +28,9 @@ ALLOWED = {"query", "max_price", "min_price", "brand_slug", "category_slug", "li
 COLS = "id, source_key, title, url_path, content, brand_slug, price, 1 - (embedding <=> %s::vector) AS similarity"
 BASE = "FROM rag_chunks WHERE store_uuid = %s AND source_type = 'product' AND embedding IS NOT NULL"   # first parameter after the vector: the store
 
-NOTE = ("Names and prices here come from the live store API: quote only these, never a price from anywhere else. A product with "
+NOTE = ("Each product lists its category: recommend only products of the type the customer asked for and leave out the rest "
+        "(for example, a foundation, bunkie board or bed frame is not a mattress). "
+        "Names and prices here come from the live store API: quote only these, never a price from anywhere else. A product with "
         "price null is priced by option (for example size): quote only a price listed in its options, with the option name. Recommend only the "
         "products listed. If fewer than the customer wanted are listed, say so. No medical claims. Do not claim stock or "
         "delivery dates (use check_inventory / get_shipping_options).")
@@ -56,6 +58,12 @@ def _slug(url_path: str | None) -> str | None:
     """The product slug when the index row's page is /p/<slug> (or legacy /product/<slug>)."""
     m = _SLUG_PATH.match(url_path or "")
     return m.group(1) if m else None
+
+
+def _categories(content: str) -> str | None:
+    m = re.search(r"Categories:\s*([^|\n]+)", content or "")
+    cats = m.group(1).strip() if m else ""
+    return cats if cats and cats != "unknown" else None
 
 
 def _sku(content: str) -> str | None:
@@ -106,19 +114,26 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
                 return custom_confirm({"sku": sku})
         run_query = run_query or _default_run_query
         vec = _vector_literal(embed_query(query))
-        fsql, fparams = _filters(args)
-        vector_rows = run_query(f"SELECT {COLS} {BASE}{fsql} ORDER BY embedding <=> %s::vector LIMIT %s", [vec, store_uuid, *fparams, vec, FETCH])
         kw = keyword_query(query)
-        keyword_rows = run_query(
-            f"SELECT {COLS} {BASE}{fsql} AND to_tsvector('english', content) @@ websearch_to_tsquery('english', %s) "
-            "ORDER BY ts_rank_cd(to_tsvector('english', content), websearch_to_tsquery('english', %s)) DESC LIMIT %s",
-            [vec, store_uuid, *fparams, kw, kw, FETCH]) if kw else []
+
+        def search(filters: dict) -> tuple[list, float | None]:
+            fsql, fparams = _filters(filters)
+            vector_rows = run_query(f"SELECT {COLS} {BASE}{fsql} ORDER BY embedding <=> %s::vector LIMIT %s", [vec, store_uuid, *fparams, vec, FETCH])
+            keyword_rows = run_query(
+                f"SELECT {COLS} {BASE}{fsql} AND to_tsvector('english', content) @@ websearch_to_tsquery('english', %s) "
+                "ORDER BY ts_rank_cd(to_tsvector('english', content), websearch_to_tsquery('english', %s)) DESC LIMIT %s",
+                [vec, store_uuid, *fparams, kw, kw, FETCH]) if kw else []
+            return fuse(vector_rows, keyword_rows, CUTOFF, CANDIDATES), max((float(r["similarity"]) for r in vector_rows), default=None)
+
+        candidates, best = search(args)
+        # The model often guesses a brand or category slug ("mattresses" when the store's is "mattresses-and-bedding"), and a
+        # wrong slug matches nothing. Then search again on the words and the budget alone, and say the filter was dropped.
+        relaxed = [k for k in ("brand_slug", "category_slug") if args.get(k)] if not candidates else []
+        if relaxed:
+            candidates, best = search({k: v for k, v in args.items() if k not in relaxed})
     except Exception:
         log.exception("recommend_products search failed")
         return {"error": "product search is unavailable right now", "note": "Do not guess products. Point the customer to the store (get_store_info)."}
-
-    best = max((float(r["similarity"]) for r in vector_rows), default=None)
-    candidates = fuse(vector_rows, keyword_rows, CUTOFF, CANDIDATES)
 
     products, dropped = [], 0
     for r in candidates:                               # the store API confirms it
@@ -136,7 +151,7 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
         lo, hi = (price, price) if price is not None else (rng["min"], rng["max"])
         if (args.get("max_price") is not None and lo > args["max_price"]) or (args.get("min_price") is not None and hi < args["min_price"]):
             dropped += 1; continue
-        entry = {"sku": sku, "name": prod.get("name") or r["title"], "price": price, "page": r["url_path"],
+        entry = {"sku": sku, "name": prod.get("name") or r["title"], "category": _categories(r["content"]), "price": price, "page": r["url_path"],
                  "brand_slug": r["brand_slug"], "similarity": round(float(r["similarity"]), 3),
                  "live": prod, "attributes": live.get("attributes", {})}
         if price is None:                                  # quote an option's price from options, never a single price
@@ -148,4 +163,9 @@ def recommend_products(args: dict[str, Any], run_query: Callable | None = None, 
     if not products:
         return {"found": False, "cutoff": CUTOFF, "best_similarity": round(best, 3) if best is not None else None,
                 "dropped_by_live_check": dropped, "note": NOTE_NONE}
-    return {"found": True, "count": len(products), "dropped_by_live_check": dropped, "products": products, "note": NOTE}
+    out = {"found": True, "count": len(products), "dropped_by_live_check": dropped, "products": products, "note": NOTE}
+    if relaxed:
+        out["filters_dropped"] = relaxed
+        out["note"] = (f"Nothing matched the {' and '.join(k.replace('_slug', '') for k in relaxed)} given, so these were found "
+                       "without that filter: do not say they are from that brand or category. " + NOTE)
+    return out

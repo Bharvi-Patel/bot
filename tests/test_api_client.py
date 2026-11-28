@@ -183,8 +183,7 @@ def test_category_products_listing():
     assert first["slug"] == "blanche-side-chair-brown-2261brn-s"
     assert first["price"] == 439.99 and isinstance(first["price"], float)
     assert first["brand"] == "Crownmark"
-    assert first["image_url"] == "https://cdn.b3c2.com/south-jackson/images/p/2261BRN.webp" or first["image_url"].startswith(
-        "https://cdn.b3c2.com/south-jackson/")
+    assert first["image_url"] == "https://cdn.b3c2.com/crownmark/images/product/medium/2261BRN.webp"   # the product's vendor folder wins
     assert "base_price" not in first
     assert res["breadcrumbs"][0]["slug"] == "dining-room"
 
@@ -239,10 +238,11 @@ def test_product_detail_normalized():
         assert unseen not in d
 
 
-def test_image_url_is_none_without_cdn_folder():
+def test_image_url_is_none_without_any_folder():
     client, _ = make(fixture("product_detail"))
-    d = client.product_detail("blanche-side-chair-brown-2261brn-s")
-    assert d["images"] == []  # placeholder not replaced, so no broken link
+    assert client.product_detail("blanche-side-chair-brown-2261brn-s")["images"]          # the vendor folder is enough
+    base = "https://cdn.b3c2.com/cdn_folder/images/product"
+    assert client.image_url(base, "a.webp") is None  # no vendor folder and no BOT_CDN_FOLDER: no broken link
 
 
 # ---------- products whose price depends on an option (real mattress responses) ----------
@@ -580,3 +580,15 @@ def test_shipping_options_parses_public_shipping_zones_and_methods():
     assert zones[0]["methods"][0]["price"] == 199.0 and zones[0]["methods"][0]["description"] == "Within 50 miles"
     assert zones[0]["methods"][1]["is_pickup"] is True and zones[0]["methods"][1]["price"] == 0.0
 
+
+
+def test_image_links_use_the_products_own_vendor_folder_like_the_storefront():
+    from bot.api_client import ApiClient, ApiConfig
+    c = ApiClient(ApiConfig("https://api.example", "uuid"))
+    base = "https://cdn.example/cdn_folder/images/product"
+    assert c.image_url(base, "a.webp") is None                                   # no folder anywhere: no broken link
+    assert c.image_url(base, "a.webp", "coaster") == "https://cdn.example/coaster/images/product/medium/a.webp"
+    assert c.image_url(base, "a.webp", "coaster", "large") == "https://cdn.example/coaster/images/product/large/a.webp"
+    assert ApiClient._image_folder({"brand": {"vendor": {"folder_name": "happy-home"}}}) == "happy-home"
+    assert ApiClient._image_folder({"brand": {"vendor": {"folder_name": "../x"}}}) is None
+    assert ApiClient._image_folder({"brand": None}) is None

@@ -326,9 +326,12 @@ def test_real_search_response_for_bed():
     urls = []
     out = search_products({"keyword": "bed"}, client=real_client(urls))
     assert urls[0][1] == "http://x/brands" and urls[1] == ("POST", "http://x/products/search")
-    assert out["count"] == 8 and out["products"][0]["name"] == "I-105XLW - Twin/Full/Queen"
-    assert out["products"][0]["price"] == 59.99 and out["products"][0]["brand_name"] == "Happy Home"
-    assert out["products"][0]["main_image"].startswith("https://cdn.b3c2.com/south-jackson/")
+    # The store's "bed" search starts with mattresses tagged "bed mattress"; a mattress is not a bed, so it is left out.
+    names = [p["name"] for p in out["products"]]
+    assert names and not any("mattress" in n.lower() or n.startswith("I-105XLW") for n in names)
+    assert all("bed" in n.lower() for n in names)
+    assert out["products"][0]["brand_name"] == "Happy Home"
+    assert out["products"][0]["main_image"].startswith("https://cdn.b3c2.com/happy-home/")      # the vendor's folder
     assert "base_price" not in json.dumps(out)
 
 
